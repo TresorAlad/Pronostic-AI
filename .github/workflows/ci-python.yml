@@ -6,11 +6,16 @@ on:
     paths: ['ml-service/**', 'ml-pipeline/**', 'ai-agent/**', '.github/workflows/ci-python.yml']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [ml-service, ml-pipeline, ai-agent]
     steps:
@@ -18,11 +23,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ${{ matrix.service }}/requirements.txt
       - name: Install dependencies
         working-directory: ${{ matrix.service }}
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff pytest
+          pip install ruff
       - name: Lint
         working-directory: ${{ matrix.service }}
         run: ruff check . || true
@@ -35,7 +43,6 @@ jobs:
             python -c "from app.agent import analyze"
           else
             python -c "from evaluation.metrics import compute_metrics"
-          fi
 
   train-demo:
     runs-on: ubuntu-latest
@@ -45,8 +52,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ml-pipeline/requirements.txt
       - name: Train demo models
         working-directory: ml-pipeline
+        env:
+          MLFLOW_TRACKING_URI: file:///tmp/prono-mlruns
+          ML_MODELS_DIR: ../ml-service/models
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
           python train.py

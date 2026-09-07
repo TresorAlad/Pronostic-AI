@@ -15,13 +15,27 @@ import (
 )
 
 type Service struct {
-	api   *apifootball.Client
-	store *db.Store
-	redis *redis.Client
+	api             *apifootball.Client
+	store           *db.Store
+	redis           *redis.Client
+	liveScope       string
+	liveMaxFixtures int
 }
 
-func NewService(api *apifootball.Client, store *db.Store, redisClient *redis.Client) *Service {
-	return &Service{api: api, store: store, redis: redisClient}
+func NewService(api *apifootball.Client, store *db.Store, redisClient *redis.Client, liveScope string, liveMaxFixtures int) *Service {
+	if liveScope == "" {
+		liveScope = "all"
+	}
+	if liveMaxFixtures <= 0 {
+		liveMaxFixtures = 20
+	}
+	return &Service{
+		api:             api,
+		store:           store,
+		redis:           redisClient,
+		liveScope:       liveScope,
+		liveMaxFixtures: liveMaxFixtures,
+	}
 }
 
 func (s *Service) SyncLeagueSeason(ctx context.Context, leagueID, season int) error {
@@ -80,12 +94,15 @@ func (s *Service) SyncLive(ctx context.Context) error {
 		return err
 	}
 
+	synced := 0
 	for _, f := range fixtures {
-		if !isTop5League(f.League.ID) {
+		if s.liveScope == "top5" && !isTop5League(f.League.ID) {
 			continue
 		}
-		dbLeagueID, err := s.store.GetLeagueID(ctx, f.League.ID)
+
+		dbLeagueID, err := s.store.UpsertLeague(ctx, f.League.ID, f.League.Name, f.League.Country, f.League.Logo)
 		if err != nil {
+			log.Printf("Error upserting league %d: %v", f.League.ID, err)
 			continue
 		}
 		seasonID, _ := s.store.UpsertSeason(ctx, dbLeagueID, f.League.Season)
@@ -94,12 +111,21 @@ func (s *Service) SyncLive(ctx context.Context) error {
 			continue
 		}
 
-		liveKey := fmt.Sprintf("live:match:%d", f.Fixture.ID)
-		liveData := fmt.Sprintf(`{"minute":%d,"home_score":%v,"away_score":%v}`,
-			f.Fixture.Status.Elapsed, ptrInt(f.Goals.Home), ptrInt(f.Goals.Away))
-		s.redis.Set(ctx, liveKey, liveData, 5*time.Minute)
+		matchID, err := s.store.GetMatchIDByExternal(ctx, f.Fixture.ID)
+		if err == nil {
+			liveKey := "live:match:" + matchID
+			liveData := fmt.Sprintf(`{"minute":%d,"home_score":%v,"away_score":%v}`,
+				f.Fixture.Status.Elapsed, ptrInt(f.Goals.Home), ptrInt(f.Goals.Away))
+			s.redis.Set(ctx, liveKey, liveData, 5*time.Minute)
+		}
+
+		synced++
+		if synced >= s.liveMaxFixtures {
+			break
+		}
 	}
 
+	log.Printf("Synced %d live fixtures (scope=%s)", synced, s.liveScope)
 	return nil
 }
 

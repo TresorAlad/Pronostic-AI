@@ -47,6 +47,21 @@ func (s *Store) GetLeagueID(ctx context.Context, externalID int) (string, error)
 	return id, err
 }
 
+func (s *Store) UpsertLeague(ctx context.Context, externalID int, name, country, logo string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO leagues (external_id, name, country, logo_url)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (external_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			country = COALESCE(NULLIF(EXCLUDED.country, ''), leagues.country),
+			logo_url = COALESCE(NULLIF(EXCLUDED.logo_url, ''), leagues.logo_url),
+			updated_at = NOW()
+		RETURNING id
+	`, externalID, name, country, logo).Scan(&id)
+	return id, err
+}
+
 func (s *Store) UpsertSeason(ctx context.Context, leagueID string, year int) (string, error) {
 	var id string
 	err := s.pool.QueryRow(ctx, `
@@ -78,6 +93,12 @@ func (s *Store) UpsertMatch(ctx context.Context, params MatchParams) (string, er
 	`, params.ExternalID, params.LeagueID, params.SeasonID, params.HomeTeamID, params.AwayTeamID,
 		params.KickoffAt, params.Status, params.Minute, params.HomeScore, params.AwayScore,
 		params.HomeScoreHT, params.AwayScoreHT, params.Venue, params.Referee, params.Round).Scan(&id)
+	return id, err
+}
+
+func (s *Store) GetMatchIDByExternal(ctx context.Context, externalID int) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM matches WHERE external_id = $1`, externalID).Scan(&id)
 	return id, err
 }
 

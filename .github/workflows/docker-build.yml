@@ -4,14 +4,26 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [collector, backend, ml-service, ai-agent, frontend]
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build Docker image
-        run: docker build -t prono-${{ matrix.service }} ./${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: false
+          tags: prono-${{ matrix.service }}:ci
+          load: true

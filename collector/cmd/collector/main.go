@@ -42,7 +42,7 @@ func main() {
 	defer redisClient.Close()
 
 	apiClient := apifootball.NewClient(cfg.APIFootballBase, cfg.APIFootballHost, cfg.APIFootballKey, cfg.APIFootballAuth)
-	svc := sync.NewService(apiClient, store, redisClient)
+	svc := sync.NewService(apiClient, store, redisClient, cfg.LiveScope, cfg.LiveMaxFixtures)
 
 	switch *mode {
 	case "backfill":

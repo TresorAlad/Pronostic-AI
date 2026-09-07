@@ -6,11 +6,16 @@ on:
     paths: ['collector/**', 'backend/**', '.github/workflows/ci-go.yml']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [collector, backend]
     steps:
@@ -18,6 +23,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache-dependency-path: ${{ matrix.service }}/go.sum
       - name: Build ${{ matrix.service }}
         working-directory: ${{ matrix.service }}
         run: |

@@ -8,15 +8,17 @@ import (
 )
 
 type Config struct {
-	DatabaseURL      string
-	RedisURL         string
+	DatabaseURL       string
+	RedisURL          string
 	APIFootballKey    string
 	APIFootballHost   string
 	APIFootballBase   string
 	APIFootballAuth   string // apisports (direct) or rapidapi
-	SyncInterval     time.Duration
-	LiveInterval     time.Duration
+	SyncInterval      time.Duration
+	LiveInterval      time.Duration
 	BackfillStartYear int
+	LiveScope         string // top5 or all
+	LiveMaxFixtures   int
 }
 
 func Load() (*Config, error) {
@@ -45,6 +47,14 @@ func Load() (*Config, error) {
 		}
 	}
 
+	liveScope := getEnv("COLLECTOR_LIVE_SCOPE", "all")
+	liveMax := 20
+	if v := os.Getenv("COLLECTOR_LIVE_MAX"); v != "" {
+		if n := parseInt(v); n > 0 {
+			liveMax = n
+		}
+	}
+
 	return &Config{
 		DatabaseURL:       getEnv("DATABASE_URL", "postgres://prono:prono_secret@localhost:5432/prono?sslmode=disable"),
 		RedisURL:          getEnv("REDIS_URL", "redis://localhost:6379/0"),
@@ -55,6 +65,8 @@ func Load() (*Config, error) {
 		SyncInterval:      syncInterval,
 		LiveInterval:      liveInterval,
 		BackfillStartYear: backfillStart,
+		LiveScope:         liveScope,
+		LiveMaxFixtures:   liveMax,
 	}, nil
 }
 
