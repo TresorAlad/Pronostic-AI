@@ -29,6 +29,8 @@ export default function MatchDetail() {
     onSuccess: () => refetch(),
   });
 
+  const analyzeError = analyze.error instanceof Error ? analyze.error.message : null;
+
   if (isLoading) return <p className="text-gray-400">Chargement...</p>;
   if (!match) return <p className="text-red-400">Match introuvable</p>;
 
@@ -98,6 +100,12 @@ export default function MatchDetail() {
             {analyze.isPending ? 'Analyse...' : 'Analyser avec IA'}
           </button>
         </div>
+
+        {analyzeError && (
+          <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-4 text-sm text-red-300">
+            Erreur lors de l'analyse : {analyzeError}
+          </div>
+        )}
 
         {prediction?.no_bet_recommended && (
           <div className="bg-gray-800/50 rounded-lg p-4 mb-4">

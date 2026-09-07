@@ -7,6 +7,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 load_dotenv()
+load_dotenv("../.env")
+load_dotenv("../../.env")
 
 from app.agent import analyze
 from app.neo4j_sync import KnowledgeGraph

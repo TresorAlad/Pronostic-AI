@@ -80,8 +80,14 @@ func main() {
 		r.Post("/auth/login", authSvc.Login)
 
 		r.Get("/leagues", matchHandler.ListLeagues)
-		r.Mount("/matches", matchHandler.Routes())
-		r.Mount("/", predHandler.Routes())
+		r.Route("/matches", func(r chi.Router) {
+			r.Mount("/", matchHandler.Routes())
+			r.Get("/{id}/prediction", predHandler.GetPrediction)
+			r.Post("/{id}/analyze", predHandler.AnalyzeMatch)
+		})
+		r.Route("/predictions", func(r chi.Router) {
+			r.Get("/performance", predHandler.GetPerformance)
+		})
 		r.Mount("/coupons", couponHandler.Routes())
 		r.Post("/evaluation/run", evalHandler.RunEvaluation)
 

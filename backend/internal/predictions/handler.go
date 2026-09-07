@@ -27,8 +27,6 @@ func NewHandler(store *db.Store, ml *clients.MLClient, ai *clients.AIAgentClient
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/performance", h.GetPerformance)
-	r.Get("/matches/{id}/prediction", h.GetPrediction)
-	r.Post("/matches/{id}/analyze", h.AnalyzeMatch)
 	return r
 }
 
