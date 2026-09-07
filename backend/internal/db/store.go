@@ -426,6 +426,28 @@ func (s *Store) EvaluateFinishedPredictions(ctx context.Context) (int, error) {
 	return int(result.RowsAffected()), nil
 }
 
+func (s *Store) RefreshModelPerformance(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM model_performance;
+		INSERT INTO model_performance (model_name, model_version, market, accuracy, log_loss, brier_score, sample_size, period_start, period_end)
+		SELECT
+			split_part(p.model_version, '-', 1),
+			p.model_version,
+			po.market,
+			AVG(CASE WHEN po.is_correct THEN 1.0 ELSE 0.0 END),
+			NULL,
+			NULL,
+			COUNT(*)::int,
+			MIN(m.kickoff_at::date),
+			MAX(m.kickoff_at::date)
+		FROM prediction_outcomes po
+		JOIN predictions p ON p.id = po.prediction_id
+		JOIN matches m ON m.id = p.match_id
+		GROUP BY p.model_version, po.market
+	`)
+	return err
+}
+
 func (s *Store) GetLiveMatches(ctx context.Context) ([]Match, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT m.id, m.external_id, m.league_id, l.name,

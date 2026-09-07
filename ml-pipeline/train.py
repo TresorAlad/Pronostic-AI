@@ -13,7 +13,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from datasets.builder import build_dataset, temporal_split
-from evaluation.metrics import compute_metrics
+from evaluation.persist_metrics import collect_validation_metrics, persist_metrics
 from models.model_1x2 import train_model as train_1x2, save as save_1x2
 from models.model_goals import train_models as train_goals, save as save_goals
 from models.model_corners import train_model as train_corners, save as save_corners
@@ -70,6 +70,16 @@ def main():
         mlflow.log_param("train_size", len(train))
         mlflow.log_param("val_size", len(val))
         mlflow.log_param("test_size", len(test))
+
+    artifacts = {
+        "1x2": artifact_1x2,
+        "goals": artifact_goals,
+        "corners": artifact_corners,
+        "shots": artifact_shots,
+    }
+    metric_rows = collect_validation_metrics(val, artifacts)
+    saved = persist_metrics(metric_rows)
+    print(f"Saved {saved} performance metrics to database")
 
     print(f"Models saved to {MODELS_DIR}")
 

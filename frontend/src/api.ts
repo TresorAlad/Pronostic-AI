@@ -72,6 +72,8 @@ export const api = {
   getPrediction: (id: string) => fetchAPI<Prediction>(`/matches/${id}/prediction`),
   analyzeMatch: (id: string) => fetchAPI<Prediction>(`/matches/${id}/analyze`, { method: 'POST' }),
   getPerformance: () => fetchAPI<ModelPerformance[]>('/predictions/performance'),
+  runEvaluation: () =>
+    fetchAPI<{ evaluated: number; message: string }>('/evaluation/run', { method: 'POST' }),
   generateCoupon: (minConfidence = 0.65, maxSelections = 5) =>
     fetchAPI<{ id: string; selections: unknown[]; disclaimer: string }>('/coupons/generate', {
       method: 'POST',
