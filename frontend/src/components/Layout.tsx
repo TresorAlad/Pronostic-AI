@@ -1,5 +1,4 @@
 import { Link, useLocation } from 'react-router-dom';
-import { useLiveWebSocket } from '../hooks/useLiveWebSocket';
 
 const navItems = [
   { path: '/', label: 'Dashboard' },
@@ -10,7 +9,6 @@ const navItems = [
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { connected } = useLiveWebSocket();
 
   return (
     <div className="min-h-screen">
@@ -32,9 +30,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 }`}
               >
                 {item.label}
-                {item.path === '/live' && connected && (
-                  <span className="ml-1 w-2 h-2 bg-red-500 rounded-full inline-block animate-pulse" />
-                )}
               </Link>
             ))}
             <Link
