@@ -140,11 +140,14 @@ func (s *Store) GetMatchesToday(ctx context.Context) ([]Match, error) {
 		JOIN leagues l ON l.id = m.league_id
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
-		WHERE m.status = 'live'
-		   OR m.kickoff_at::date = CURRENT_DATE
-		   OR (m.status = 'scheduled' AND m.kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '7 days')
+		WHERE l.external_id IN (39, 140, 135, 78, 61)
+		  AND m.status != 'live'
+		  AND (
+		    m.kickoff_at::date = CURRENT_DATE
+		    OR (m.status = 'scheduled' AND m.kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '7 days')
+		  )
 		ORDER BY
-			CASE m.status WHEN 'live' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END,
+			CASE m.status WHEN 'scheduled' THEN 0 ELSE 1 END,
 			m.kickoff_at
 		LIMIT 50
 	`)
@@ -174,6 +177,7 @@ func (s *Store) getRecentMatches(ctx context.Context, limit int) ([]Match, error
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
 		WHERE m.status = 'finished'
+		  AND l.external_id IN (39, 140, 135, 78, 61)
 		ORDER BY m.kickoff_at DESC
 		LIMIT $1
 	`, limit)

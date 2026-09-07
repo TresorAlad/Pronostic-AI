@@ -10,17 +10,14 @@ export default function Dashboard() {
     refetchInterval: 60000,
   });
 
-  const hasLive = matches?.some((m) => m.status === 'live');
   const hasScheduled = matches?.some((m) => m.status === 'scheduled');
-  const showRecentFallback = matches?.length && !hasLive && !hasScheduled;
+  const showRecentFallback = matches?.length && !hasScheduled;
 
   return (
     <div>
       <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold mb-2">
-            {hasLive ? 'Matchs en direct' : 'Matchs du jour'}
-          </h1>
+          <h1 className="text-3xl font-bold mb-2">Matchs du jour</h1>
           <p className="text-gray-400">Top 5 europeen - Pronostics bases sur le Machine Learning</p>
         </div>
         <button onClick={() => refetch()} className="btn-primary text-sm">
@@ -42,7 +39,7 @@ export default function Dashboard() {
 
       {showRecentFallback && (
         <p className="text-sm text-yellow-500/80 mb-4">
-          Aucun match live ou a venir. Derniers resultats en base (lancez sync-live pour le temps reel).
+          Aucun match Top 5 a venir. Derniers resultats des grands championnats.
         </p>
       )}
 
@@ -51,7 +48,7 @@ export default function Dashboard() {
           <div className="card text-center py-12">
             <p className="text-gray-400">Aucun match disponible.</p>
             <p className="text-sm text-gray-500 mt-2">
-              Lancez : <code className="text-accent">go run ./cmd/collector -mode=sync-live</code>
+              Lancez : <code className="text-accent">go run ./cmd/collector -mode=sync-today</code>
             </p>
           </div>
         )}
