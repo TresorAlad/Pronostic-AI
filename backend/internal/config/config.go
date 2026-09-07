@@ -16,6 +16,7 @@ type Config struct {
 	Port          string
 	MLServiceURL  string
 	AIAgentURL    string
+	CollectorURL  string
 	CORSOrigins   []string
 	JWTExpiration time.Duration
 	AppEnv        string
@@ -40,6 +41,7 @@ func Load() (*Config, error) {
 		Port:          getEnv("BACKEND_PORT", "8080"),
 		MLServiceURL:  getEnv("ML_SERVICE_URL", "http://localhost:5000"),
 		AIAgentURL:    getEnv("AI_AGENT_URL", "http://localhost:5001"),
+		CollectorURL:  getEnv("COLLECTOR_URL", "http://localhost:8090"),
 		CORSOrigins:   origins,
 		JWTExpiration: 24 * time.Hour,
 		AppEnv:        appEnv,

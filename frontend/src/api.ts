@@ -33,6 +33,7 @@ export interface Prediction {
   ai_abstain?: boolean;
   is_live?: boolean;
   delta?: Record<string, number>;
+  direction?: Record<string, 'up' | 'down' | 'flat'>;
   minute?: number;
 }
 
@@ -48,6 +49,17 @@ export interface CouponSelection {
   confidence: number;
   value_edge?: number;
   bookmaker_odd?: number;
+  avg_odd?: number;
+  bookmaker_name?: string;
+  odd_trend?: 'up' | 'down' | 'flat';
+}
+
+export interface GenerateCouponOptions {
+  minConfidence?: number;
+  maxSelections?: number;
+  minCombinedOdd?: number;
+  maxCombinedOdd?: number;
+  name?: string;
 }
 
 export interface ModelPerformance {
@@ -100,6 +112,43 @@ export interface PublicStats {
   outcomes: number;
 }
 
+export interface League {
+  id: string;
+  external_id: number;
+  name: string;
+  country?: string;
+  logo_url?: string;
+}
+
+export interface LeagueFilterOption {
+  id: string;
+  external_id: number;
+  label: string;
+  match_count: number;
+}
+
+export interface TrackedLeague {
+  external_id: number;
+  label: string;
+  priority: number;
+}
+
+export interface MatchDayQuery {
+  date?: string;
+  leagueId?: string;
+  leagueExternalId?: number;
+  status?: 'scheduled' | 'live' | 'finished' | 'all';
+}
+
+function buildQuery(params: Record<string, string | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value && value !== 'all') q.set(key, value);
+  }
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
 export interface AppNotification {
   id: string;
   type: string;
@@ -146,11 +195,17 @@ function parseRecord(value: unknown): Record<string, number> {
 }
 
 export function normalizePrediction(raw: Record<string, unknown>): Prediction {
+  const directionRaw = raw.direction;
+  let direction: Prediction['direction'];
+  if (directionRaw && typeof directionRaw === 'object') {
+    direction = directionRaw as Prediction['direction'];
+  }
   return {
     ...(raw as unknown as Prediction),
     predictions: parseRecord(raw.predictions),
     confidence: parseRecord(raw.confidence),
     delta: parseRecord(raw.delta),
+    direction,
     ai_reasons: Array.isArray(raw.ai_reasons) ? (raw.ai_reasons as string[]) : undefined,
   };
 }
@@ -177,8 +232,21 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getMatchesToday: (scheduledOnly = false) =>
-    fetchAPI<Match[]>(`/matches/today${scheduledOnly ? '?scheduled_only=true' : ''}`),
+  getMatchesToday: (query: MatchDayQuery = {}) => {
+    const status = query.status === 'all' ? undefined : query.status;
+    return fetchAPI<Match[]>(
+      `/matches/today${buildQuery({
+        date: query.date,
+        league_id: query.leagueId,
+        league_external_id:
+          query.leagueExternalId != null ? String(query.leagueExternalId) : undefined,
+        status,
+      })}`
+    );
+  },
+  getActiveLeagues: (date: string) =>
+    fetchAPI<LeagueFilterOption[]>(`/leagues/active${buildQuery({ date })}`),
+  getTrackedLeagues: () => fetchAPI<TrackedLeague[]>('/leagues/tracked'),
   getLiveMatches: () => fetchAPI<Match[]>('/matches/live'),
   getMatch: (id: string) => fetchAPI<Match>(`/matches/${id}`),
   getMatchStats: (id: string) => fetchAPI<unknown[]>(`/matches/${id}/stats`),
@@ -194,17 +262,33 @@ export const api = {
     fetchAPI<{ evaluated: number; message: string }>('/evaluation/run', { method: 'POST' }),
   getMyCoupons: () => fetchAPI<SavedCouponSummary[]>('/coupons/mine'),
   getMyCoupon: (id: string) => fetchAPI<Record<string, unknown>>(`/coupons/mine/${id}`),
-  generateCoupon: (minConfidence = 0.55, maxSelections = 10) =>
-    fetchAPI<{
+  generateCoupon: (options: GenerateCouponOptions = {}) => {
+    const {
+      minConfidence = 0.55,
+      maxSelections = 10,
+      minCombinedOdd = 10,
+      maxCombinedOdd = 25,
+      name,
+    } = options;
+    return fetchAPI<{
       id: string;
       selections: CouponSelection[] | null;
       disclaimer: string;
       combined_odd?: number;
+      min_combined_odd?: number;
+      max_combined_odd?: number;
       warning?: string;
     }>('/coupons/generate', {
       method: 'POST',
-      body: JSON.stringify({ min_confidence: minConfidence, max_selections: maxSelections }),
-    }),
+      body: JSON.stringify({
+        min_confidence: minConfidence,
+        max_selections: maxSelections,
+        min_combined_odd: minCombinedOdd,
+        max_combined_odd: maxCombinedOdd,
+        name,
+      }),
+    });
+  },
   login: (email: string, password: string) =>
     fetchAPI<AuthResponse>('/auth/login', {
       method: 'POST',

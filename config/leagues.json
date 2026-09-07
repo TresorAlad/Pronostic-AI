@@ -1,0 +1,12 @@
+{
+  "top_matches_max": 10,
+  "coupon_match_pool_max": 200,
+  "coupon_extra_external_ids": [3, 848, 40],
+  "leagues": [
+    { "external_id": 39, "label": "Premier League", "priority": 1 },
+    { "external_id": 140, "label": "La Liga", "priority": 2 },
+    { "external_id": 135, "label": "Serie A", "priority": 3 },
+    { "external_id": 78, "label": "Bundesliga", "priority": 4 },
+    { "external_id": 61, "label": "Ligue 1", "priority": 5 }
+  ]
+}

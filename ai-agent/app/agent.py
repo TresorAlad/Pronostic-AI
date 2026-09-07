@@ -250,7 +250,7 @@ def _rule_based_analyze(home, away, predictions, confidence, ctx) -> tuple[str, 
 
     parts.append(
         f"Probabilités du modèle : victoire {home} {home_win:.0%}, "
-        f"+2,5 buts {over_25:.0%}, BTTS {btts:.0%}, "
+        f"+2,5 buts {over_25:.0%}, les deux marquent {btts:.0%}, "
         f"+9,5 corners {over_corners:.0%}, +22,5 tirs {over_shots:.0%}."
     )
 

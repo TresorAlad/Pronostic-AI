@@ -6,7 +6,34 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prono/collector/internal/leagues"
 )
+
+func trackedExternalIDs() []int32 {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return []int32{39, 140, 135, 78, 61}
+	}
+	ids := cfg.TrackedExternalIDs()
+	out := make([]int32, len(ids))
+	for i, id := range ids {
+		out[i] = int32(id)
+	}
+	return out
+}
+
+func couponExternalIDs() []int32 {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return []int32{39, 140, 135, 78, 61, 3, 848, 40}
+	}
+	ids := cfg.CouponExternalIDs()
+	out := make([]int32, len(ids))
+	for i, id := range ids {
+		out[i] = int32(id)
+	}
+	return out
+}
 
 type Store struct {
 	pool *pgxpool.Pool
@@ -100,6 +127,12 @@ func (s *Store) GetMatchIDByExternal(ctx context.Context, externalID int) (strin
 	var id string
 	err := s.pool.QueryRow(ctx, `SELECT id FROM matches WHERE external_id = $1`, externalID).Scan(&id)
 	return id, err
+}
+
+func (s *Store) GetMatchStatus(ctx context.Context, matchID string) (string, error) {
+	var status string
+	err := s.pool.QueryRow(ctx, `SELECT status::text FROM matches WHERE id = $1`, matchID).Scan(&status)
+	return status, err
 }
 
 type MatchParams struct {
@@ -255,18 +288,19 @@ func (s *Store) GetLiveMatches(ctx context.Context) ([]MatchRef, error) {
 
 func (s *Store) GetUpcomingForOdds(ctx context.Context, limit int) ([]MatchRef, error) {
 	if limit <= 0 {
-		limit = 30
+		limit = 200
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT m.id, m.external_id
 		FROM matches m
 		JOIN leagues l ON l.id = m.league_id
-		WHERE l.external_id IN (39, 140, 135, 78, 61)
-		  AND m.status IN ('scheduled', 'live')
-		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '3 days'
+		WHERE l.external_id = ANY($1::int[])
+		  AND m.status = 'scheduled'
+		  AND m.kickoff_at > NOW()
+		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '7 days'
 		ORDER BY m.kickoff_at
-		LIMIT $1
-	`, limit)
+		LIMIT $2
+	`, couponExternalIDs(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -288,6 +322,13 @@ func (s *Store) UpsertMatchOdds(ctx context.Context, matchID, bookmaker, market,
 		VALUES ($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (match_id, bookmaker, market, selection)
 		DO UPDATE SET odd = EXCLUDED.odd, fetched_at = NOW()
+	`, matchID, bookmaker, market, selection, odd)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO match_odds_history (match_id, bookmaker, market, selection, odd, fetched_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
 	`, matchID, bookmaker, market, selection, odd)
 	return err
 }

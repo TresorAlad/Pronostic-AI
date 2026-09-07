@@ -1,30 +1,52 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, confidenceBadge, formatProbability } from '../api';
 import MatchTeams from '../components/MatchTeams';
 import FilterSelect, { FilterDate } from '../components/FilterSelect';
 import { useMatchStatusWebSocket } from '../hooks/useMatchStatusWebSocket';
+import { formatDisplayDate, todayLocalISO } from '../utils/date';
 
 type StatusFilter = 'all' | 'scheduled' | 'live' | 'finished';
 
 const STATUS_OPTIONS = [
-  { value: 'all', label: 'Tous' },
+  { value: 'all', label: 'À venir + Live' },
   { value: 'scheduled', label: 'À venir', hint: 'scheduled' as const },
   { value: 'live', label: 'Live', hint: 'live' as const },
   { value: 'finished', label: 'Terminés', hint: 'finished' as const },
 ];
 
+function parseTypeFilter(value: string): { leagueId?: string; leagueExternalId?: number } {
+  if (value === 'all') return {};
+  if (value.startsWith('ext:')) {
+    const ext = Number(value.slice(4));
+    return Number.isFinite(ext) ? { leagueExternalId: ext } : {};
+  }
+  return { leagueId: value };
+}
+
 export default function Dashboard() {
   const queryClient = useQueryClient();
-  const [leagueFilter, setLeagueFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('scheduled');
-  const [dateFilter, setDateFilter] = useState('');
+  const [dateFilter, setDateFilter] = useState(todayLocalISO());
 
   const { data: matches, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['matches-today', statusFilter === 'scheduled'],
-    queryFn: () => api.getMatchesToday(statusFilter === 'scheduled'),
+    queryKey: ['matches-today', dateFilter, typeFilter, statusFilter],
+    queryFn: () => {
+      const league = parseTypeFilter(typeFilter);
+      return api.getMatchesToday({
+        date: dateFilter,
+        ...league,
+        status: statusFilter,
+      });
+    },
     refetchInterval: 60000,
+  });
+
+  const { data: leagueFilterOptions } = useQuery({
+    queryKey: ['leagues-filter-options', dateFilter],
+    queryFn: () => api.getActiveLeagues(dateFilter),
   });
 
   const { data: liveMatches } = useQuery({
@@ -34,8 +56,9 @@ export default function Dashboard() {
   });
 
   useMatchStatusWebSocket((event) => {
-    if (event.to === 'live') {
+    if (event.to === 'live' || event.to === 'finished') {
       queryClient.invalidateQueries({ queryKey: ['matches-today'] });
+      queryClient.invalidateQueries({ queryKey: ['leagues-filter-options'] });
       queryClient.invalidateQueries({ queryKey: ['live-matches-count'] });
     }
   });
@@ -44,36 +67,33 @@ export default function Dashboard() {
   const backendDown = isError && !hasMatches;
   const refreshFailed = isError && hasMatches;
 
-  const leagues = useMemo(() => {
-    const names = new Set(matches?.map((m) => m.league_name) ?? []);
-    return Array.from(names).sort();
-  }, [matches]);
+  const typeOptions = [
+    { value: 'all', label: 'Tous les championnats' },
+    ...(leagueFilterOptions ?? []).map((l) => ({
+      value: l.id || `ext:${l.external_id}`,
+      label: l.match_count > 0 ? `${l.label} (${l.match_count})` : l.label,
+    })),
+  ];
 
-  const filtered = useMemo(() => {
-    return (matches ?? []).filter((m) => {
-      if (leagueFilter !== 'all' && m.league_name !== leagueFilter) return false;
-      if (statusFilter !== 'all' && m.status !== statusFilter) return false;
-      if (dateFilter && !m.kickoff_at.startsWith(dateFilter)) return false;
-      return true;
-    });
-  }, [matches, leagueFilter, statusFilter, dateFilter]);
-
-  const leagueOptions = useMemo(
-    () => [{ value: 'all', label: 'Toutes les ligues' }, ...leagues.map((l) => ({ value: l, label: l }))],
-    [leagues]
-  );
-
+  const defaultStatus: StatusFilter = 'scheduled';
   const activeFilters =
-    (leagueFilter !== 'all' ? 1 : 0) + (statusFilter !== 'all' ? 1 : 0) + (dateFilter ? 1 : 0);
+    (typeFilter !== 'all' ? 1 : 0) +
+    (statusFilter !== defaultStatus && statusFilter !== 'all' ? 1 : 0) +
+    (dateFilter !== todayLocalISO() ? 1 : 0);
 
   const resetFilters = () => {
-    setLeagueFilter('all');
-    setStatusFilter('all');
-    setDateFilter('');
+    setTypeFilter('all');
+    setStatusFilter('scheduled');
+    setDateFilter(todayLocalISO());
   };
 
-  const hasScheduled = filtered.some((m) => m.status === 'scheduled');
-  const showRecentFallback = filtered.length > 0 && !hasScheduled;
+  const hasActiveFilters =
+    typeFilter !== 'all' ||
+    (statusFilter !== 'scheduled' && statusFilter !== 'all') ||
+    dateFilter !== todayLocalISO();
+
+  const matchCount = matches?.length ?? 0;
+  const isToday = dateFilter === todayLocalISO();
 
   return (
     <div>
@@ -81,7 +101,12 @@ export default function Dashboard() {
         <div>
           <h1 className="page-title">Matchs du jour</h1>
           <p className="page-subtitle">
-            Top 5 européen · Prédictions basées sur le machine learning et les stats réelles
+            {isToday
+              ? "Les principaux matchs d'aujourd'hui"
+              : `Les principaux matchs du ${formatDisplayDate(dateFilter)}`}
+          </p>
+          <p className="text-sm text-slate-500 mt-1">
+            {matchCount} match{matchCount > 1 ? 's' : ''} affiché{matchCount > 1 ? 's' : ''}
           </p>
           {(liveMatches?.length ?? 0) > 0 && (
             <Link to="/live" className="text-sm text-brand-dark dark:text-brand-light mt-2 inline-block">
@@ -112,10 +137,11 @@ export default function Dashboard() {
         </div>
 
         <FilterSelect
-          label="Ligue"
-          value={leagueFilter}
-          options={leagueOptions}
-          onChange={setLeagueFilter}
+          label="Championnat"
+          value={typeFilter}
+          options={typeOptions}
+          onChange={setTypeFilter}
+          placeholder="Tous les championnats"
         />
         <FilterSelect
           label="Statut"
@@ -130,12 +156,10 @@ export default function Dashboard() {
 
       {backendDown && (
         <div className="card text-center py-12 border-red-500/30 bg-red-500/5">
-          <p className="text-red-300 font-medium">Backend inaccessible</p>
+          <p className="text-red-300 font-medium">Service momentanément indisponible</p>
           <p className="text-sm text-slate-500 mt-2">
-            Lancez le backend :{' '}
-            <code className="text-brand-dark dark:text-brand-light">cd backend && go run ./cmd/server</code>
+            Réessayez dans quelques instants ou actualisez la page.
           </p>
-          <p className="text-xs text-slate-600 mt-1">{(error as Error).message}</p>
         </div>
       )}
 
@@ -144,25 +168,12 @@ export default function Dashboard() {
           <p className="text-amber-800 dark:text-amber-200 text-sm">
             Impossible de rafraîchir les matchs. Affichage des dernières données connues.
           </p>
-          <p className="text-xs text-slate-500 mt-1">{(error as Error).message}</p>
         </div>
-      )}
-
-      {hasMatches && showRecentFallback && (
-        <p className="text-sm text-gold-light/90 mb-4 rounded-xl border border-gold/20 bg-gold/5 px-4 py-3">
-          Aucun match Top 5 à venir. Derniers résultats des grands championnats.
-        </p>
       )}
 
       {hasMatches && (
         <div className="grid gap-4">
-          {filtered.length === 0 && (
-            <div className="card text-center py-12">
-              <p className="text-slate-400">Aucun match pour ces filtres.</p>
-            </div>
-          )}
-
-          {filtered.map((match) => (
+          {matches!.map((match) => (
             <MatchCard key={match.id} match={match} />
           ))}
         </div>
@@ -170,13 +181,21 @@ export default function Dashboard() {
 
       {!isLoading && !backendDown && !hasMatches && (
         <div className="card text-center py-12">
-          <p className="text-slate-400">Aucun match disponible.</p>
-          <p className="text-sm text-slate-500 mt-2">
-            Lancez :{' '}
-            <code className="text-brand-dark dark:text-brand-light">
-              go run ./cmd/collector -mode=sync-today
-            </code>
+          <p className="text-slate-400">
+            {hasActiveFilters
+              ? 'Aucun match pour ces filtres.'
+              : "Aucun match prévu ce jour-là pour les championnats suivis."}
           </p>
+          {!hasActiveFilters && (
+            <p className="text-sm text-slate-500 mt-2">
+              Aucune rencontre n&apos;est programmée ce jour-là dans les championnats suivis.
+            </p>
+          )}
+          {hasActiveFilters && (
+            <p className="text-sm text-slate-500 mt-2">
+              Essayez un autre statut, un autre championnat ou une autre date.
+            </p>
+          )}
         </div>
       )}
     </div>

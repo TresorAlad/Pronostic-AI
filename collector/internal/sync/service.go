@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/prono/collector/internal/apifootball"
-	"github.com/prono/collector/internal/config"
 	"github.com/prono/collector/internal/db"
+	"github.com/prono/collector/internal/leagues"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -66,25 +66,33 @@ func (s *Service) SyncLeagueSeason(ctx context.Context, leagueID, season int) er
 }
 
 func (s *Service) SyncToday(ctx context.Context) error {
-	today := time.Now().Format("2006-01-02")
-	fixtures, err := s.api.GetFixturesByDate(ctx, today)
+	return s.SyncByDate(ctx, time.Now().Format("2006-01-02"))
+}
+
+func (s *Service) SyncByDate(ctx context.Context, date string) error {
+	fixtures, err := s.api.GetFixturesByDate(ctx, date)
 	if err != nil {
 		return err
 	}
 
+	synced := 0
 	for _, f := range fixtures {
-		if !isTop5League(f.League.ID) {
+		if !isCouponLeague(f.League.ID) {
 			continue
 		}
-		dbLeagueID, err := s.store.GetLeagueID(ctx, f.League.ID)
+		dbLeagueID, err := s.store.UpsertLeague(ctx, f.League.ID, f.League.Name, f.League.Country, f.League.Logo)
 		if err != nil {
+			log.Printf("Error upserting league %d: %v", f.League.ID, err)
 			continue
 		}
 		seasonID, _ := s.store.UpsertSeason(ctx, dbLeagueID, f.League.Season)
 		if err := s.processFixture(ctx, f, dbLeagueID, &seasonID); err != nil {
-			log.Printf("Error processing today's fixture %d: %v", f.Fixture.ID, err)
+			log.Printf("Error processing fixture %d (%s): %v", f.Fixture.ID, date, err)
+			continue
 		}
+		synced++
 	}
+	log.Printf("Synced %d fixtures for %s (coupon leagues)", synced, date)
 	return nil
 }
 
@@ -96,7 +104,7 @@ func (s *Service) SyncLive(ctx context.Context) error {
 
 	synced := 0
 	for _, f := range fixtures {
-		if s.liveScope == "top5" && !isTop5League(f.League.ID) {
+		if (s.liveScope == "tracked" || s.liveScope == "top5") && !isTrackedLeague(f.League.ID) {
 			continue
 		}
 
@@ -135,7 +143,7 @@ func (s *Service) SyncLive(ctx context.Context) error {
 
 func (s *Service) Backfill(ctx context.Context, startYear int) error {
 	currentYear := time.Now().Year()
-	for _, leagueID := range config.Top5LeagueIDs {
+	for _, leagueID := range trackedLeagueIDs() {
 		for year := startYear; year <= currentYear; year++ {
 			if err := s.SyncLeagueSeason(ctx, leagueID, year); err != nil {
 				log.Printf("Backfill error league %d year %d: %v", leagueID, year, err)
@@ -200,7 +208,12 @@ func (s *Service) processFixture(ctx context.Context, f apifootball.FixtureRespo
 		minute = &m
 	}
 
-	_, err = s.store.UpsertMatch(ctx, db.MatchParams{
+	prevStatus := ""
+	if prevID, err := s.store.GetMatchIDByExternal(ctx, f.Fixture.ID); err == nil {
+		prevStatus, _ = s.store.GetMatchStatus(ctx, prevID)
+	}
+
+	matchID, err := s.store.UpsertMatch(ctx, db.MatchParams{
 		ExternalID:  f.Fixture.ID,
 		LeagueID:    leagueID,
 		SeasonID:    seasonID,
@@ -219,6 +232,16 @@ func (s *Service) processFixture(ctx context.Context, f apifootball.FixtureRespo
 	})
 	if err != nil {
 		return err
+	}
+
+	if s.redis != nil {
+		if status == "finished" && prevStatus != "" && prevStatus != "finished" {
+			statusEvent := fmt.Sprintf(`{"type":"match_status_change","data":{"match_id":"%s","from":"%s","to":"finished"},"ts":"%s"}`,
+				matchID, prevStatus, time.Now().UTC().Format(time.RFC3339))
+			s.redis.Publish(ctx, "ws:broadcast", statusEvent)
+			s.redis.Del(ctx, "live:match:"+matchID)
+			s.redis.Del(ctx, "prediction:"+matchID)
+		}
 	}
 
 	if status == "finished" {
@@ -375,13 +398,28 @@ func toFloatPtr(v interface{}) *float64 {
 	return nil
 }
 
-func isTop5League(id int) bool {
-	for _, lid := range config.Top5LeagueIDs {
-		if lid == id {
-			return true
-		}
+func isTrackedLeague(id int) bool {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return false
 	}
-	return false
+	return cfg.IsTracked(id)
+}
+
+func isCouponLeague(id int) bool {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return false
+	}
+	return cfg.IsCouponLeague(id)
+}
+
+func trackedLeagueIDs() []int {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return []int{39, 140, 135, 78, 61}
+	}
+	return cfg.TrackedExternalIDs()
 }
 
 func (s *Service) SyncOdds(ctx context.Context, limit int) error {

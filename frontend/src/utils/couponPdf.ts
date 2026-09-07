@@ -50,14 +50,14 @@ export function exportCouponPdf(coupon: CouponPdfInput) {
 
   doc.setTextColor(40, 40, 40);
   doc.setFontSize(11);
-  doc.text('Total buts · BTTS · Buts par équipe', 14, 50);
+  doc.text('Total buts · Les deux marquent · Buts par équipe', 14, 50);
 
   const combined =
     coupon.combinedOdd ??
     coupon.selections.reduce((acc, s) => acc * (s.bookmaker_odd ?? 1 / Math.max(s.confidence, 0.01)), 1);
 
   doc.setFont('helvetica', 'bold');
-  doc.text(`Cote combinée : ${formatOdd(combined)} / 50 max`, 14, 58);
+  doc.text(`Cote combinée : ${formatOdd(combined)}`, 14, 58);
   doc.setFont('helvetica', 'normal');
 
   const rows = coupon.selections.map((sel, i) => [

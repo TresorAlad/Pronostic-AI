@@ -18,10 +18,11 @@ type Config struct {
 	SyncInterval      time.Duration
 	LiveInterval      time.Duration
 	BackfillStartYear int
-	LiveScope         string // top5 or all
+	LiveScope         string // all or tracked (legacy alias: top5)
 	LiveMaxFixtures   int
 	BackendURL        string
 	AIAgentURL        string
+	HTTPPort          string
 }
 
 func Load() (*Config, error) {
@@ -72,6 +73,7 @@ func Load() (*Config, error) {
 		LiveMaxFixtures:   liveMax,
 		BackendURL:        getEnv("BACKEND_URL", "http://localhost:8082"),
 		AIAgentURL:        getEnv("AI_AGENT_URL", "http://localhost:5001"),
+		HTTPPort:          getEnv("COLLECTOR_HTTP_PORT", "8090"),
 	}
 	return validate(cfg)
 }
@@ -100,5 +102,5 @@ func parseInt(s string) int {
 	return n
 }
 
-// Top5LeagueIDs API-Football external IDs for Top 5 European leagues
+// Top5LeagueIDs is kept for backward compatibility; prefer config/leagues.json.
 var Top5LeagueIDs = []int{39, 140, 135, 78, 61}

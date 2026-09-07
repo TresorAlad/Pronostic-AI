@@ -1,7 +1,9 @@
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { api, confidenceBadge, formatProbability } from '../api';
+import { api, confidenceBadge, formatProbability, type Prediction } from '../api';
+import MarketProbCell from '../components/MarketProbCell';
 import MatchTeams from '../components/MatchTeams';
+import { useLiveWebSocket } from '../hooks/useLiveWebSocket';
 import { groupPredictions, marketLabel } from '../utils/marketLabels';
 
 const STAT_ROWS = [
@@ -42,6 +44,8 @@ export default function MatchDetail() {
     enabled: !!id,
   });
 
+  const { predictions: wsPredictions, probHistory } = useLiveWebSocket();
+
   const analyze = useMutation({
     mutationFn: () => api.analyzeMatch(id!),
     onSuccess: () => refetch(),
@@ -52,8 +56,12 @@ export default function MatchDetail() {
   if (isLoading) return <p className="text-slate-400">Chargement...</p>;
   if (!match) return <p className="text-red-400">Match introuvable</p>;
 
-  const predictionGroups = prediction?.predictions
-    ? groupPredictions(prediction.predictions)
+  const livePrediction: Prediction | undefined =
+    match.status === 'live' && id ? wsPredictions[id] : undefined;
+  const activePrediction = livePrediction ?? prediction;
+
+  const predictionGroups = activePrediction?.predictions
+    ? groupPredictions(activePrediction.predictions)
     : [];
 
   return (
@@ -125,7 +133,7 @@ export default function MatchDetail() {
                   {o.bookmaker} · {o.market} · {o.selection} @ {o.odd.toFixed(2)}
                 </span>
                 {o.value_edge != null && o.value_edge > 0.05 && (
-                  <span className="badge-high">Value +{Math.round(o.value_edge * 100)} pts</span>
+                  <span className="badge-high">Écart favorable</span>
                 )}
               </li>
             ))}
@@ -135,7 +143,7 @@ export default function MatchDetail() {
 
       <div className="card mb-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-5">
-          <h3 className="font-display text-lg font-semibold text-heading">Prédictions ML</h3>
+          <h3 className="font-display text-lg font-semibold text-heading">Estimations</h3>
           <button
             onClick={() => analyze.mutate()}
             disabled={analyze.isPending}
@@ -161,8 +169,26 @@ export default function MatchDetail() {
           </div>
         )}
 
-        {prediction && (
+        {activePrediction && (
           <div className="space-y-6">
+            {match.status === 'live' && (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-2">
+                {['home_win', 'over_2_5', 'btts'].map((key) => {
+                  const value = activePrediction.predictions?.[key];
+                  if (value == null) return null;
+                  return (
+                    <MarketProbCell
+                      key={key}
+                      label={marketLabel(key)}
+                      probability={value}
+                      delta={activePrediction.delta?.[key]}
+                      direction={activePrediction.direction?.[key]}
+                      history={id ? probHistory[id]?.[key] : []}
+                    />
+                  );
+                })}
+              </div>
+            )}
             {predictionGroups.map((group) => (
               <div key={group.title}>
                 <h4 className="text-sm font-semibold text-brand-dark dark:text-brand-light mb-3">{group.title}</h4>
@@ -176,9 +202,9 @@ export default function MatchDetail() {
                       <p className="font-display text-xl font-bold text-heading">
                         {key.startsWith('predicted_total') ? value.toFixed(1) : formatProbability(value)}
                       </p>
-                      {prediction.confidence?.[key] !== undefined && !key.startsWith('predicted_total') && (
-                        <span className={`${confidenceBadge(prediction.confidence[key])} mt-2`}>
-                          Confiance {formatProbability(prediction.confidence[key])}
+                      {activePrediction.confidence?.[key] !== undefined && !key.startsWith('predicted_total') && (
+                        <span className={`${confidenceBadge(activePrediction.confidence[key])} mt-2`}>
+                          Confiance {formatProbability(activePrediction.confidence[key])}
                         </span>
                       )}
                     </div>
@@ -190,7 +216,7 @@ export default function MatchDetail() {
         )}
 
         <p className="text-xs text-slate-500 mt-5">
-          Estimations statistiques du modèle ML. Aucune garantie de gain.
+          Estimations statistiques. Aucune garantie de gain.
         </p>
       </div>
 

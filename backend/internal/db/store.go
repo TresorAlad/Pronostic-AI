@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prono/backend/internal/leagues"
 )
 
 type Store struct {
@@ -36,6 +37,13 @@ type League struct {
 	Name       string `json:"name"`
 	Country    string `json:"country"`
 	LogoURL    string `json:"logo_url"`
+}
+
+type LeagueFilterOption struct {
+	ID         string `json:"id"`
+	ExternalID int    `json:"external_id"`
+	Label      string `json:"label"`
+	MatchCount int    `json:"match_count"`
 }
 
 type Team struct {
@@ -109,6 +117,9 @@ type CouponSelection struct {
 	Confidence     float64 `json:"confidence"`
 	ValueEdge      float64 `json:"value_edge,omitempty"`
 	BookmakerOdd   float64 `json:"bookmaker_odd,omitempty"`
+	AvgOdd         float64 `json:"avg_odd,omitempty"`
+	BookmakerName  string  `json:"bookmaker_name,omitempty"`
+	OddTrend       string  `json:"odd_trend,omitempty"`
 }
 
 type ModelPerformance struct {
@@ -138,68 +149,175 @@ func (s *Store) ListLeagues(ctx context.Context) ([]League, error) {
 	return leagues, rows.Err()
 }
 
-func (s *Store) GetMatchesToday(ctx context.Context) ([]Match, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT m.id, m.external_id, m.league_id, l.name,
-			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
-			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
-			m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
-			COALESCE(m.venue,''), COALESCE(m.round,'')
-		FROM matches m
-		JOIN leagues l ON l.id = m.league_id
-		JOIN teams ht ON ht.id = m.home_team_id
-		JOIN teams at ON at.id = m.away_team_id
-		WHERE l.external_id IN (39, 140, 135, 78, 61)
-		  AND (
-		    m.status = 'live'
-		    OR (
-		      m.status != 'live'
-		      AND (
-		        m.kickoff_at::date = CURRENT_DATE
-		        OR (m.status = 'scheduled' AND m.kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '7 days')
-		      )
-		    )
-		  )
-		ORDER BY
-			CASE m.status WHEN 'live' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END,
-			m.kickoff_at
-		LIMIT 50
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	matches, err := scanMatches(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) > 0 {
-		return matches, nil
-	}
-	return s.getRecentMatches(ctx, 20)
+type MatchQueryOpts struct {
+	LeagueID         *string
+	LeagueExternalID *int
+	Status           string
+	MaxResults       int
 }
 
-func (s *Store) getRecentMatches(ctx context.Context, limit int) ([]Match, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT m.id, m.external_id, m.league_id, l.name,
-			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
-			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
-			m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
-			COALESCE(m.venue,''), COALESCE(m.round,'')
+func trackedExternalIDs() []int32 {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return []int32{39, 140, 135, 78, 61}
+	}
+	ids := cfg.TrackedExternalIDs()
+	out := make([]int32, len(ids))
+	for i, id := range ids {
+		out[i] = int32(id)
+	}
+	return out
+}
+
+func leaguePrioritySQL() string {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return "999"
+	}
+	return cfg.PrioritySQL("l.external_id")
+}
+
+func primaryLeaguePrioritySQL() string {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return "CASE WHEN l.external_id IN (39,140,135,78,61) THEN 0 ELSE 1 END"
+	}
+	return cfg.PrimaryPrioritySQL("l.external_id")
+}
+
+func couponExternalIDs() []int32 {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return []int32{39, 140, 135, 78, 61, 3, 848, 40}
+	}
+	ids := cfg.CouponExternalIDs()
+	out := make([]int32, len(ids))
+	for i, id := range ids {
+		out[i] = int32(id)
+	}
+	return out
+}
+
+func topMatchesMax() int {
+	cfg, err := leagues.Load()
+	if err != nil || cfg.TopMatchesMax() <= 0 {
+		return 10
+	}
+	return cfg.TopMatchesMax()
+}
+
+const matchSelectColumns = `
+		m.id, m.external_id, m.league_id, l.name,
+		ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
+		at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
+		m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
+		COALESCE(m.venue,''), COALESCE(m.round,'')`
+
+func (s *Store) GetMatchesByDate(ctx context.Context, date time.Time, opts MatchQueryOpts) ([]Match, error) {
+	max := opts.MaxResults
+	if max <= 0 {
+		max = topMatchesMax()
+	}
+
+	leagueID := opts.LeagueID
+	leagueExternalID := opts.LeagueExternalID
+	statusClause := matchStatusWhere(opts.Status, date)
+	priority := leaguePrioritySQL()
+
+	query := fmt.Sprintf(`
+		SELECT %s
 		FROM matches m
 		JOIN leagues l ON l.id = m.league_id
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
-		WHERE m.status = 'finished'
-		  AND l.external_id IN (39, 140, 135, 78, 61)
-		ORDER BY m.kickoff_at DESC
-		LIMIT $1
-	`, limit)
+		WHERE l.external_id = ANY($1::int[])
+		  AND m.kickoff_at::date = $2::date
+		  AND %s
+		  AND ($3::uuid IS NULL OR m.league_id = $3)
+		  AND ($5::int IS NULL OR l.external_id = $5)
+		ORDER BY
+			CASE m.status WHEN 'live' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END,
+			%s,
+			m.kickoff_at
+		LIMIT $4
+	`, matchSelectColumns, statusClause, priority)
+
+	rows, err := s.pool.Query(ctx, query, trackedExternalIDs(), date, leagueID, max, leagueExternalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanMatches(rows)
+}
+
+func (s *Store) ListLeagueFilterOptions(ctx context.Context, date time.Time) ([]LeagueFilterOption, error) {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	var out []LeagueFilterOption
+	for _, entry := range cfg.Leagues {
+		opt := LeagueFilterOption{
+			ExternalID: entry.ExternalID,
+			Label:      entry.Label,
+		}
+
+		var dbName string
+		err := s.pool.QueryRow(ctx, `
+			SELECT id::text, name FROM leagues WHERE external_id = $1
+		`, entry.ExternalID).Scan(&opt.ID, &dbName)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if opt.Label == "" && dbName != "" {
+			opt.Label = dbName
+		}
+
+		if opt.ID != "" {
+			countWhere := upcomingMatchCountWhere(date)
+			_ = s.pool.QueryRow(ctx, fmt.Sprintf(`
+				SELECT COUNT(*)::int FROM matches m
+				WHERE m.league_id = $1::uuid AND m.kickoff_at::date = $2::date
+				  AND %s
+			`, countWhere), opt.ID, date).Scan(&opt.MatchCount)
+		}
+
+		out = append(out, opt)
+	}
+	return out, nil
+}
+
+func (s *Store) ListActiveLeaguesByDate(ctx context.Context, date time.Time) ([]League, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT l.id, l.external_id, l.name, l.country, COALESCE(l.logo_url,'')
+		FROM matches m
+		JOIN leagues l ON l.id = m.league_id
+		WHERE l.external_id = ANY($1::int[])
+		  AND m.kickoff_at::date = $2::date
+		ORDER BY l.name
+	`, trackedExternalIDs(), date)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []League
+	for rows.Next() {
+		var l League
+		if err := rows.Scan(&l.ID, &l.ExternalID, &l.Name, &l.Country, &l.LogoURL); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetMatchesToday(ctx context.Context) ([]Match, error) {
+	return s.GetMatchesByDate(ctx, time.Now().UTC(), MatchQueryOpts{})
+}
+
+func (s *Store) GetMatchesTodayScheduled(ctx context.Context) ([]Match, error) {
+	return s.GetMatchesByDate(ctx, time.Now().UTC(), MatchQueryOpts{Status: "scheduled"})
 }
 
 func (s *Store) GetMatchByID(ctx context.Context, id string) (*Match, error) {
@@ -466,17 +584,20 @@ type PublicStats struct {
 
 func (s *Store) GetPublicStats(ctx context.Context) (*PublicStats, error) {
 	var st PublicStats
+	tracked := trackedExternalIDs()
 	err := s.pool.QueryRow(ctx, `
 		SELECT
 			(SELECT COUNT(*)::int FROM matches m
 			 JOIN leagues l ON l.id = m.league_id
-			 WHERE l.external_id IN (39,140,135,78,61) AND m.kickoff_at::date = CURRENT_DATE),
+			 WHERE l.external_id = ANY($1::int[]) AND m.kickoff_at::date = CURRENT_DATE),
 			(SELECT COUNT(*)::int FROM matches WHERE status = 'live'),
-			(SELECT COUNT(*)::int FROM matches WHERE status = 'finished'),
+			(SELECT COUNT(*)::int FROM matches m
+			 JOIN leagues l ON l.id = m.league_id
+			 WHERE l.external_id = ANY($1::int[]) AND m.status = 'finished'),
 			(SELECT COUNT(*)::int FROM match_statistics),
 			(SELECT COUNT(*)::int FROM predictions),
 			(SELECT COUNT(*)::int FROM prediction_outcomes)
-	`).Scan(&st.MatchesToday, &st.LiveMatches, &st.FinishedMatches, &st.MatchStatistics, &st.Predictions, &st.Outcomes)
+	`, tracked).Scan(&st.MatchesToday, &st.LiveMatches, &st.FinishedMatches, &st.MatchStatistics, &st.Predictions, &st.Outcomes)
 	if err != nil {
 		return nil, err
 	}
@@ -516,66 +637,33 @@ func (s *Store) GetTop5UpcomingMatches(ctx context.Context, limit int) ([]Match,
 	return s.getTop5UpcomingMatches(ctx, limit, false)
 }
 
-func (s *Store) GetScheduledMatchesForCoupon(ctx context.Context, minMatches, maxMatches int) ([]Match, error) {
-	if minMatches <= 0 {
-		minMatches = 10
+func couponMatchPoolMax() int {
+	cfg, err := leagues.Load()
+	if err != nil || cfg.CouponMatchPoolMax() <= 0 {
+		return 200
 	}
-	if maxMatches <= 0 {
-		maxMatches = 30
-	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT m.id, m.external_id, m.league_id, l.name,
-			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
-			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
-			m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
-			COALESCE(m.venue,''), COALESCE(m.round,'')
-		FROM matches m
-		JOIN leagues l ON l.id = m.league_id
-		JOIN teams ht ON ht.id = m.home_team_id
-		JOIN teams at ON at.id = m.away_team_id
-		WHERE m.status = 'scheduled'
-		  AND l.external_id IN (39, 140, 135, 78, 61, 3, 848, 40)
-		  AND m.kickoff_at BETWEEN CURRENT_DATE AND NOW() + INTERVAL '7 days'
-		ORDER BY
-			CASE WHEN l.external_id IN (39, 140, 135, 78, 61) THEN 0 ELSE 1 END,
-			CASE WHEN m.kickoff_at::date = CURRENT_DATE THEN 0 ELSE 1 END,
-			m.kickoff_at
-		LIMIT $1
-	`, maxMatches)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	matches, err := scanMatches(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) >= minMatches {
-		return matches, nil
-	}
-	return matches, nil
+	return cfg.CouponMatchPoolMax()
 }
 
-func (s *Store) GetMatchesTodayScheduled(ctx context.Context) ([]Match, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT m.id, m.external_id, m.league_id, l.name,
-			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
-			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
-			m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
-			COALESCE(m.venue,''), COALESCE(m.round,'')
+func (s *Store) GetScheduledMatchesForCoupon(ctx context.Context, maxMatches int) ([]Match, error) {
+	if maxMatches <= 0 {
+		maxMatches = couponMatchPoolMax()
+	}
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT %s
 		FROM matches m
 		JOIN leagues l ON l.id = m.league_id
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
-		WHERE l.external_id IN (39, 140, 135, 78, 61)
-		  AND m.status = 'scheduled'
-		  AND (
-		    m.kickoff_at::date = CURRENT_DATE
-		    OR (m.kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '7 days')
-		  )
-		ORDER BY m.kickoff_at
-		LIMIT 50
-	`)
+		WHERE %s
+		  AND l.external_id = ANY($1::int[])
+		  AND m.kickoff_at BETWEEN CURRENT_DATE AND NOW() + INTERVAL '7 days'
+		ORDER BY
+			%s,
+			CASE WHEN m.kickoff_at::date = CURRENT_DATE THEN 0 ELSE 1 END,
+			m.kickoff_at
+		LIMIT $2
+	`, matchSelectColumns, couponMatchWhere(), primaryLeaguePrioritySQL()), couponExternalIDs(), maxMatches)
 	if err != nil {
 		return nil, err
 	}
@@ -584,27 +672,23 @@ func (s *Store) GetMatchesTodayScheduled(ctx context.Context) ([]Match, error) {
 }
 
 func (s *Store) getTop5UpcomingMatches(ctx context.Context, limit int, includeLive bool) ([]Match, error) {
-	statusFilter := "m.status = 'scheduled'"
+	statusFilter := `m.status = 'scheduled' AND m.kickoff_at > NOW()`
 	if includeLive {
-		statusFilter = "m.status IN ('scheduled', 'live')"
+		statusFilter = `(m.status = 'live' OR (m.status = 'scheduled' AND m.kickoff_at > NOW()))`
 	}
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT m.id, m.external_id, m.league_id, l.name,
-			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
-			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
-			m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
-			COALESCE(m.venue,''), COALESCE(m.round,'')
+		SELECT %s
 		FROM matches m
 		JOIN leagues l ON l.id = m.league_id
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
-		WHERE l.external_id IN (39, 140, 135, 78, 61)
+		WHERE l.external_id = ANY($1::int[])
 		  AND %s
 		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '7 days'
 		ORDER BY m.kickoff_at
-		LIMIT $1
-	`, statusFilter), limit)
+		LIMIT $2
+	`, matchSelectColumns, statusFilter), trackedExternalIDs(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -612,19 +696,24 @@ func (s *Store) getTop5UpcomingMatches(ctx context.Context, limit int, includeLi
 	return scanMatches(rows)
 }
 
-func (s *Store) SaveCoupon(ctx context.Context, userID *string, name string, selections []CouponSelection) (string, error) {
+func (s *Store) SaveCoupon(ctx context.Context, userID *string, name string, combinedOdd float64, selections []CouponSelection) (string, error) {
 	var couponID string
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO saved_coupons (user_id, name) VALUES ($1, $2) RETURNING id
-	`, userID, name).Scan(&couponID)
+		INSERT INTO saved_coupons (user_id, name, combined_odd) VALUES ($1, $2, $3) RETURNING id
+	`, userID, name, combinedOdd).Scan(&couponID)
 	if err != nil {
 		return "", err
 	}
 	for _, sel := range selections {
 		_, err := s.pool.Exec(ctx, `
-			INSERT INTO coupon_selections (coupon_id, match_id, market, selection, confidence)
-			VALUES ($1, $2, $3, $4, $5)
-		`, couponID, sel.MatchID, sel.Market, sel.Selection, sel.Confidence)
+			INSERT INTO coupon_selections (
+				coupon_id, match_id, market, selection, confidence,
+				bookmaker_odd, avg_odd, bookmaker_name, value_edge, odd_trend
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`, couponID, sel.MatchID, sel.Market, sel.Selection, sel.Confidence,
+			nullFloat(sel.BookmakerOdd), nullFloat(sel.AvgOdd), nullString(sel.BookmakerName),
+			nullFloat(sel.ValueEdge), nullString(sel.OddTrend))
 		if err != nil {
 			return "", err
 		}
@@ -632,20 +721,39 @@ func (s *Store) SaveCoupon(ctx context.Context, userID *string, name string, sel
 	return couponID, nil
 }
 
+func nullFloat(v float64) interface{} {
+	if v <= 0 {
+		return nil
+	}
+	return v
+}
+
+func nullString(v string) interface{} {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
 func (s *Store) GetCoupon(ctx context.Context, id string) (map[string]interface{}, error) {
 	var name string
 	var createdAt time.Time
-	err := s.pool.QueryRow(ctx, `SELECT name, created_at FROM saved_coupons WHERE id = $1`, id).Scan(&name, &createdAt)
+	var combinedOdd *float64
+	err := s.pool.QueryRow(ctx, `SELECT name, created_at, combined_odd FROM saved_coupons WHERE id = $1`, id).Scan(&name, &createdAt, &combinedOdd)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT cs.match_id, cs.market, cs.selection, cs.confidence,
-			ht.name, at.name
+			COALESCE(cs.bookmaker_odd, 0), COALESCE(cs.avg_odd, 0),
+			COALESCE(cs.bookmaker_name, ''), COALESCE(cs.value_edge, 0),
+			COALESCE(cs.odd_trend, ''),
+			ht.name, at.name, COALESCE(l.name, '')
 		FROM coupon_selections cs
 		JOIN matches m ON m.id = cs.match_id
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
+		LEFT JOIN leagues l ON l.id = m.league_id
 		WHERE cs.coupon_id = $1
 	`, id)
 	if err != nil {
@@ -654,19 +762,42 @@ func (s *Store) GetCoupon(ctx context.Context, id string) (map[string]interface{
 	defer rows.Close()
 	var selections []map[string]interface{}
 	for rows.Next() {
-		var matchID, market, selection, home, away string
-		var confidence float64
-		if err := rows.Scan(&matchID, &market, &selection, &confidence, &home, &away); err != nil {
+		var matchID, market, selection, home, away, leagueName, bookmakerName, oddTrend string
+		var confidence, bookmakerOdd, avgOdd, valueEdge float64
+		if err := rows.Scan(&matchID, &market, &selection, &confidence,
+			&bookmakerOdd, &avgOdd, &bookmakerName, &valueEdge, &oddTrend,
+			&home, &away, &leagueName); err != nil {
 			return nil, err
 		}
-		selections = append(selections, map[string]interface{}{
+		sel := map[string]interface{}{
 			"match_id": matchID, "market": market, "selection": selection,
 			"confidence": confidence, "home_team": home, "away_team": away,
-		})
+			"league_name": leagueName,
+		}
+		if bookmakerOdd > 0 {
+			sel["bookmaker_odd"] = bookmakerOdd
+		}
+		if avgOdd > 0 {
+			sel["avg_odd"] = avgOdd
+		}
+		if bookmakerName != "" {
+			sel["bookmaker_name"] = bookmakerName
+		}
+		if valueEdge > 0 {
+			sel["value_edge"] = valueEdge
+		}
+		if oddTrend != "" {
+			sel["odd_trend"] = oddTrend
+		}
+		selections = append(selections, sel)
 	}
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"id": id, "name": name, "created_at": createdAt, "selections": selections,
-	}, rows.Err()
+	}
+	if combinedOdd != nil && *combinedOdd > 0 {
+		result["combined_odd"] = *combinedOdd
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) ListCouponsByUser(ctx context.Context, userID string) ([]map[string]interface{}, error) {

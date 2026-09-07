@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +13,7 @@ import (
 	"github.com/prono/collector/internal/apifootball"
 	"github.com/prono/collector/internal/config"
 	"github.com/prono/collector/internal/db"
+	"github.com/prono/collector/internal/httpadmin"
 	"github.com/prono/collector/internal/sync"
 	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
@@ -20,6 +21,7 @@ import (
 
 func main() {
 	mode := flag.String("mode", "daemon", "Mode: daemon, backfill, sync-today, sync-live, sync-stats, sync-stats-all, sync-odds")
+	date := flag.String("date", "", "Date YYYY-MM-DD for sync-today (default: today)")
 	startYear := flag.Int("start-year", 2018, "Backfill start year")
 	statsLimit := flag.Int("limit", 500, "Max matches for sync-stats mode")
 	statsBatches := flag.Int("batches", 10, "Batches for sync-stats-all mode")
@@ -61,10 +63,14 @@ func main() {
 		log.Println("Done. Graphe Neo4j synchronise si ai-agent disponible.")
 
 	case "sync-today":
-		if err := svc.SyncToday(ctx); err != nil {
+		syncDate := *date
+		if syncDate == "" {
+			syncDate = time.Now().Format("2006-01-02")
+		}
+		if err := svc.SyncByDate(ctx, syncDate); err != nil {
 			log.Fatalf("Sync today error: %v", err)
 		}
-		log.Println("Today's fixtures synced")
+		log.Printf("Fixtures synced for %s", syncDate)
 		sync.TriggerPrewarm(ctx, cfg.BackendURL)
 
 	case "sync-live":
@@ -100,47 +106,36 @@ func main() {
 		log.Printf("Odds synced (limit=%d)", *statsLimit)
 
 	default:
-		runDaemon(ctx, cfg, svc)
+		runDaemon(ctx, cfg, svc, redisClient)
 	}
 }
 
-func runDaemon(ctx context.Context, cfg *config.Config, svc *sync.Service) {
+func runDaemon(ctx context.Context, cfg *config.Config, svc *sync.Service, redisClient *redis.Client) {
+	admin := httpadmin.New(svc, cfg.BackendURL)
+	httpSrv := &http.Server{
+		Addr:    ":" + cfg.HTTPPort,
+		Handler: admin.Handler(),
+	}
+	go func() {
+		log.Printf("Collector HTTP listening on :%s", cfg.HTTPPort)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Collector HTTP error: %v", err)
+		}
+	}()
+
 	c := cron.New()
-
-	syncSpec := fmt.Sprintf("@every %s", cfg.SyncInterval.String())
-	if _, err := c.AddFunc(syncSpec, func() {
-		log.Println("Running scheduled sync...")
-		if err := svc.SyncToday(ctx); err != nil {
-			log.Printf("Scheduled sync error: %v", err)
-		} else {
-			sync.TriggerPrewarm(ctx, cfg.BackendURL)
-		}
-		seasonYear := time.Now().Year()
-		for _, leagueID := range config.Top5LeagueIDs {
-			svc.SyncInjuries(ctx, leagueID, seasonYear)
-		}
-		svc.SyncMatchDetails(ctx, 200)
-	}); err != nil {
-		log.Fatalf("Invalid sync cron spec %q: %v", syncSpec, err)
+	if err := sync.RegisterDaemonJobs(c, ctx, svc, cfg.BackendURL, cfg.SyncInterval, cfg.LiveInterval, redisClient); err != nil {
+		log.Fatalf("Invalid cron spec: %v", err)
 	}
-
-	liveSpec := fmt.Sprintf("@every %s", cfg.LiveInterval.String())
-	if _, err := c.AddFunc(liveSpec, func() {
-		if err := svc.SyncLive(ctx); err != nil {
-			log.Printf("Live sync error: %v", err)
-		} else {
-			sync.TriggerEvaluation(ctx, cfg.BackendURL)
-		}
-	}); err != nil {
-		log.Fatalf("Invalid live cron spec %q: %v", liveSpec, err)
-	}
-
 	c.Start()
-	log.Println("Collector daemon started")
+	log.Println("Collector daemon started (auto sync-today on start, daily at 00:05, periodic)")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Println("Shutting down collector...")
 	c.Stop()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	httpSrv.Shutdown(shutdownCtx)
 }

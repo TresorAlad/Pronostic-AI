@@ -2,19 +2,18 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth, userLabel } from '../hooks/useAuth';
 import { api } from '../api';
-
-const LEAGUES = ['Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1'];
+import LandingLivePreview from '../components/LandingLivePreview';
 
 const STEPS = [
   {
     step: '01',
     title: 'Collecte des données',
-    text: 'Historique des matchs, stats détaillées et blessures synchronisés depuis API-Football.',
+    text: 'Historique des matchs, statistiques détaillées et infos équipes mises à jour régulièrement.',
   },
   {
     step: '02',
-    title: 'Prédiction ML',
-    text: 'Quatre modèles calibrés estiment les probabilités par marché avec seuil de confiance.',
+    title: 'Estimations par marché',
+    text: 'Des probabilités calibrées pour chaque type de pari, avec un niveau de confiance associé.',
   },
   {
     step: '03',
@@ -25,14 +24,14 @@ const STEPS = [
 
 const FEATURES = [
   {
-    title: 'Modèles ML calibrés',
+    title: 'Probabilités fiables',
     description:
-      'Probabilités issues de modèles entraînés sur des milliers de matchs terminés, pas de chiffres inventés.',
+      'Estimations issues de l\'analyse de milliers de matchs terminés, pas de chiffres inventés.',
   },
   {
     title: 'Analyse IA explicable',
     description:
-      "L'agent commente les prédictions ML existantes et peut s'abstenir si la confiance est insuffisante.",
+      "Un commentaire clair sur chaque rencontre, avec abstention si la confiance est insuffisante.",
   },
   {
     title: 'Coupons intelligents',
@@ -42,14 +41,14 @@ const FEATURES = [
   {
     title: 'Performance traçable',
     description:
-      'Évaluation post-match et courbes de précision pour mesurer la qualité des modèles dans le temps.',
+      'Comparaison aux résultats réels pour suivre la qualité des prédictions dans le temps.',
   },
 ];
 
 const MARKETS = [
   '1X2',
   'Over / Under',
-  'BTTS',
+  'Les deux marquent',
   'Double chance',
   'Corners',
   'Tirs',
@@ -59,7 +58,8 @@ const MARKETS = [
   'Possession',
 ];
 
-function formatCount(n: number | undefined) {
+function formatCount(n: number | undefined | null, loading = false) {
+  if (loading) return '...';
   if (n == null) return '-';
   if (n >= 1000) return `${Math.round(n / 100) / 10}k`;
   return String(n);
@@ -67,32 +67,45 @@ function formatCount(n: number | undefined) {
 
 export default function Landing() {
   const { isAuthenticated, user, couponCount } = useAuth();
-  const { data: stats } = useQuery({
+  const { data: trackedLeagues } = useQuery({
+    queryKey: ['tracked-leagues'],
+    queryFn: api.getTrackedLeagues,
+    staleTime: 300_000,
+  });
+  const { data: stats, isLoading, isError } = useQuery({
     queryKey: ['public-stats'],
     queryFn: api.getPublicStats,
     staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: 2,
   });
+
+  const statsReady = !isLoading && !isError && stats != null;
 
   const liveStats = [
     {
-      value: stats?.live_matches ? String(stats.live_matches) : 'Live',
+      value: statsReady ? formatCount(stats.live_matches) : formatCount(undefined, isLoading),
       label: 'Matchs en direct',
-      sub: stats?.matches_today ? `${stats.matches_today} matchs aujourd'hui` : 'Temps réel WebSocket',
+      sub: statsReady
+        ? `${stats.matches_today} match${stats.matches_today > 1 ? 's' : ''} aujourd'hui`
+        : isError
+          ? 'Données indisponibles'
+          : 'Mise à jour en direct',
     },
     {
-      value: formatCount(stats?.finished_matches),
+      value: formatCount(stats?.finished_matches, isLoading),
       label: 'Matchs analysés',
-      sub: 'Historique Top 5 en base',
+      sub: 'Grands championnats européens',
     },
     {
-      value: formatCount(stats?.match_statistics),
+      value: formatCount(stats?.match_statistics, isLoading),
       label: 'Stats détaillées',
       sub: 'Corners, tirs, cartons',
     },
     {
-      value: isAuthenticated ? String(couponCount) : formatCount(stats?.predictions),
-      label: isAuthenticated ? 'Vos coupons' : 'Prédictions ML',
-      sub: isAuthenticated ? 'Sauvegardés sur votre compte' : 'Marchés calibrés',
+      value: isAuthenticated ? String(couponCount) : formatCount(stats?.predictions, isLoading),
+      label: isAuthenticated ? 'Vos coupons' : 'Prédictions',
+      sub: isAuthenticated ? 'Sauvegardés sur votre compte' : 'Tous les marchés',
     },
   ];
 
@@ -120,8 +133,8 @@ export default function Landing() {
               <span className="block text-brand-dark dark:text-brand-light">pilotés par la data.</span>
             </h1>
             <p className="mt-5 text-lg leading-relaxed text-slate-600 dark:text-slate-300">
-              Machine learning, statistiques match par match et analyse IA sur les cinq grands
-              championnats européens. Transparent, mesurable, sans promesses impossibles.
+              Statistiques match par match et analyse IA sur les cinq grands championnats
+              européens. Transparent, mesurable, sans promesses impossibles.
             </p>
             <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
               <Link to="/dashboard" className="btn-primary px-8 py-3 text-base">
@@ -139,37 +152,7 @@ export default function Landing() {
             </div>
           </div>
 
-          <div className="landing-preview">
-            <div className="landing-preview-glow" />
-            <div className="landing-preview-card">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs font-bold uppercase tracking-wider text-brand-dark dark:text-brand-light">
-                  Serie A · 18:30
-                </span>
-                <span className="landing-preview-live">Live 67&apos;</span>
-              </div>
-              <p className="text-center font-display text-lg font-semibold text-heading mb-4">
-                Inter vs Milan
-              </p>
-              <div className="grid grid-cols-3 gap-2 mb-4 text-center text-sm">
-                <div className="rounded-lg bg-slate-100 py-2 dark:bg-navy-800">
-                  <p className="text-xs text-slate-500">1X2</p>
-                  <p className="font-semibold text-brand-dark dark:text-brand-light">52 %</p>
-                </div>
-                <div className="rounded-lg bg-slate-100 py-2 dark:bg-navy-800">
-                  <p className="text-xs text-slate-500">+2,5</p>
-                  <p className="font-semibold text-brand-dark dark:text-brand-light">61 %</p>
-                </div>
-                <div className="rounded-lg bg-slate-100 py-2 dark:bg-navy-800">
-                  <p className="text-xs text-slate-500">BTTS</p>
-                  <p className="font-semibold text-brand-dark dark:text-brand-light">58 %</p>
-                </div>
-              </div>
-              <p className="text-xs leading-relaxed text-slate-500 border-t border-slate-200 pt-3 dark:border-navy-600">
-                Analyse IA : volume offensif élevé, corners attendus au-dessus de la moyenne ligue.
-              </p>
-            </div>
-          </div>
+          <LandingLivePreview />
         </div>
       </section>
 
@@ -191,11 +174,11 @@ export default function Landing() {
             Championnats couverts
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            {LEAGUES.map((league) => (
-              <span key={league} className="landing-league-pill">
-                {league}
+            {trackedLeagues?.map((league) => (
+              <span key={league.external_id} className="landing-league-pill">
+                {league.label}
               </span>
-            ))}
+            )) ?? null}
           </div>
         </div>
       </section>
@@ -245,8 +228,8 @@ export default function Landing() {
                   Des marchés variés, une seule source de vérité
                 </h2>
                 <p className="mt-4 text-slate-600 dark:text-slate-400">
-                  Chaque probabilité affichée provient des modèles ML ou des stats réelles en base.
-                  L&apos;IA ne crée jamais de chiffres de toutes pièces.
+                  Chaque probabilité affichée repose sur des statistiques réelles et des
+                  estimations vérifiées. L&apos;IA ne crée jamais de chiffres de toutes pièces.
                 </p>
                 <Link to="/performance" className="btn-secondary mt-6 inline-block text-sm">
                   Consulter la performance

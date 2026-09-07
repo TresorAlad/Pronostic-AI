@@ -1,7 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import Logo from './Logo';
 import ThemeToggle from './ThemeToggle';
-import HealthWidget from './HealthWidget';
 import UserMenu from './UserMenu';
 
 const navItems = [
@@ -39,7 +38,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               })}
             </nav>
             <ThemeToggle />
-            <HealthWidget />
             <UserMenu />
           </div>
         </div>
@@ -59,7 +57,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 text-center">
           <Logo size="sm" showText={false} />
           <p className="text-xs text-slate-500">
-            Estimations statistiques · Aucune garantie de gain · Données API-Football
+            Estimations statistiques · Jeu responsable · Aucune garantie de gain
           </p>
         </div>
       </footer>

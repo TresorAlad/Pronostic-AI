@@ -199,10 +199,14 @@ func (ls *LiveService) pollLiveMatches(ctx context.Context) {
 				"away_score":  match.AwayScore,
 				"status":      match.Status,
 				"home_team": map[string]interface{}{
-					"id": match.HomeTeam.ID, "name": match.HomeTeam.Name, "logo_url": match.HomeTeam.LogoURL,
+					"id": match.HomeTeam.ID, 
+					"name": match.HomeTeam.Name, 
+					"logo_url": match.HomeTeam.LogoURL,
 				},
 				"away_team": map[string]interface{}{
-					"id": match.AwayTeam.ID, "name": match.AwayTeam.Name, "logo_url": match.AwayTeam.LogoURL,
+					"id": match.AwayTeam.ID, 
+					"name": match.AwayTeam.Name, 
+					"logo_url": match.AwayTeam.LogoURL,
 				},
 			})
 			ls.hub.BroadcastEvent("match_update", json.RawMessage(data))
@@ -222,12 +226,20 @@ func (ls *LiveService) broadcastPredictionUpdate(matchID string, pred *db.Predic
 	_ = json.Unmarshal(pred.Predictions, &preds)
 
 	delta := map[string]float64{}
+	direction := map[string]string{}
 	ls.predMu.Lock()
 	prev := ls.prevPred[matchID]
 	for k, v := range preds {
 		if prev != nil {
 			if d := v - prev[k]; math.Abs(d) >= 0.01 {
 				delta[k] = math.Round(d*1000) / 1000
+				if d > 0 {
+					direction[k] = "up"
+				} else {
+					direction[k] = "down"
+				}
+			} else {
+				direction[k] = "flat"
 			}
 		}
 	}
@@ -239,13 +251,17 @@ func (ls *LiveService) broadcastPredictionUpdate(matchID string, pred *db.Predic
 	ls.predMu.Unlock()
 
 	payload := map[string]interface{}{
-		"match_id":       matchID,
-		"id":             pred.ID,
-		"model_version":  pred.ModelVersion,
-		"predictions":    preds,
-		"is_live":        true,
-		"delta":          delta,
+		"match_id":           matchID,
+		"id":                 pred.ID,
+		"model_version":      pred.ModelVersion,
+		"predictions":        preds,
+		"is_live":            true,
+		"delta":              delta,
+		"direction":          direction,
 		"no_bet_recommended": pred.NoBetRecommended,
+	}
+	if prev != nil {
+		payload["predictions_prev"] = prev
 	}
 	if minute != nil {
 		payload["minute"] = *minute

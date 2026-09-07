@@ -36,6 +36,14 @@ type MatchOdd struct {
 	Odd       float64 `json:"odd"`
 }
 
+type MatchOddHistory struct {
+	Bookmaker string    `json:"bookmaker"`
+	Market    string    `json:"market"`
+	Selection string    `json:"selection"`
+	Odd       float64   `json:"odd"`
+	FetchedAt time.Time `json:"fetched_at"`
+}
+
 func (s *Store) CreateNotification(ctx context.Context, userID, nType, title, body string) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO notifications (user_id, type, title, body)
@@ -240,6 +248,32 @@ func (s *Store) GetMatchOdds(ctx context.Context, matchID string) ([]MatchOdd, e
 	return odds, rows.Err()
 }
 
+func (s *Store) GetMatchOddsHistory(ctx context.Context, matchID string, limit int) ([]MatchOddHistory, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT bookmaker, market, selection, odd::float8, fetched_at
+		FROM match_odds_history
+		WHERE match_id = $1
+		ORDER BY fetched_at DESC
+		LIMIT $2
+	`, matchID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var history []MatchOddHistory
+	for rows.Next() {
+		var h MatchOddHistory
+		if err := rows.Scan(&h.Bookmaker, &h.Market, &h.Selection, &h.Odd, &h.FetchedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, rows.Err()
+}
+
 func (s *Store) GetUpcomingMatchIDsForOdds(ctx context.Context, limit int) ([]struct {
 	ID         string
 	ExternalID int
@@ -251,12 +285,13 @@ func (s *Store) GetUpcomingMatchIDsForOdds(ctx context.Context, limit int) ([]st
 		SELECT m.id::text, m.external_id
 		FROM matches m
 		JOIN leagues l ON l.id = m.league_id
-		WHERE l.external_id IN (39, 140, 135, 78, 61)
-		  AND m.status IN ('scheduled', 'live')
-		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '3 days'
+		WHERE l.external_id = ANY($1::int[])
+		  AND m.status = 'scheduled'
+		  AND m.kickoff_at > NOW()
+		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '7 days'
 		ORDER BY m.kickoff_at
-		LIMIT $1
-	`, limit)
+		LIMIT $2
+	`, trackedExternalIDs(), limit)
 	if err != nil {
 		return nil, err
 	}

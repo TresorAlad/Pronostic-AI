@@ -112,6 +112,20 @@ export function marketLabel(key: string): string {
   return key.replace(/_/g, ' ');
 }
 
+/** Libellés compacts pour cartes, aperçus et exports. */
+export function shortMarketLabel(key: string): string {
+  if (key === '1x2') return '1X2';
+  const normalized = key.replace('.', '_');
+  const short: Record<string, string> = {
+    over_1_5: '+1,5',
+    over_2_5: '+2,5',
+    over_3_5: '+3,5',
+    btts: '2 marquent',
+    btts_no: 'Pas 2 buts',
+  };
+  return short[normalized] ?? short[key] ?? marketLabel(key);
+}
+
 const CATEGORY_BY_MARKET = new Map<string, string>(
   MARKET_CATEGORIES.flatMap((cat) => cat.markets.map((m) => [m, cat.title] as const))
 );

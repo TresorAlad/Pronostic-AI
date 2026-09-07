@@ -59,8 +59,8 @@ export default function Performance() {
     <div>
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="page-title">Performance des modèles</h1>
-          <p className="page-subtitle">Métriques de validation ML et évaluation post-match</p>
+          <h1 className="page-title">Performance</h1>
+          <p className="page-subtitle">Précision des prédictions comparée aux résultats réels</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => refetch()} className="btn-secondary shrink-0 text-sm">
@@ -104,10 +104,6 @@ export default function Performance() {
           >
             {runEval.isPending ? 'Évaluation en cours...' : 'Lancer l\'évaluation'}
           </button>
-          <p className="text-xs text-slate-500 mt-4">
-            Ou en CLI :{' '}
-            <code className="text-brand-dark dark:text-brand-light">curl -X POST .../evaluation/run</code>
-          </p>
         </div>
       )}
 
@@ -142,7 +138,7 @@ export default function Performance() {
       {chartData.length > 0 && (
         <div className="card mb-6">
           <h3 className="font-display text-lg font-semibold text-heading mb-4">
-            Précision par marché (validation)
+            Précision par marché
           </h3>
           <div className="w-full h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -163,11 +159,10 @@ export default function Performance() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-slate-400 border-b border-navy-600">
-                <th className="text-left py-3 font-medium">Modèle</th>
+                <th className="text-left py-3 font-medium">Source</th>
                 <th className="text-left py-3 font-medium">Marché</th>
                 <th className="text-right py-3 font-medium">Précision</th>
-                <th className="text-right py-3 font-medium">Log Loss</th>
-                <th className="text-right py-3 font-medium">Brier</th>
+                <th className="text-right py-3 font-medium">Fiabilité</th>
                 <th className="text-right py-3 font-medium">Échantillon</th>
               </tr>
             </thead>
@@ -175,7 +170,7 @@ export default function Performance() {
               {performance.map((p, i) => (
                 <tr key={i} className="border-b border-navy-600/50 hover:bg-navy-800/40 transition-colors">
                   <td className="py-3 text-slate-800 dark:text-slate-200">
-                    {p.model_name} {p.model_version}
+                    {p.model_name}
                   </td>
                   <td className="py-3 capitalize text-slate-600 dark:text-slate-300">
                     {p.market.replace(/_/g, ' ')}
@@ -183,7 +178,6 @@ export default function Performance() {
                   <td className="text-right py-3 text-brand-dark dark:text-brand-light">
                     {p.accuracy != null ? formatProbability(p.accuracy) : '-'}
                   </td>
-                  <td className="text-right py-3 text-slate-400">{p.log_loss?.toFixed(4) ?? '-'}</td>
                   <td className="text-right py-3 text-slate-400">{p.brier_score?.toFixed(4) ?? '-'}</td>
                   <td className="text-right py-3 text-slate-400">{p.sample_size ?? '-'}</td>
                 </tr>

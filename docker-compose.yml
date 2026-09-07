@@ -116,6 +116,7 @@ services:
     env_file: .env
     environment:
       <<: *app-environment
+      COLLECTOR_URL: http://collector:8090
     ports:
       - "8080:8080"
     depends_on:
@@ -137,6 +138,11 @@ services:
     env_file: .env
     environment:
       <<: *app-environment
+      LEAGUES_CONFIG_PATH: /config/leagues.json
+    volumes:
+      - ./config/leagues.json:/config/leagues.json:ro
+    ports:
+      - "8090:8090"
     depends_on:
       postgres:
         condition: service_healthy

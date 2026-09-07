@@ -2,11 +2,15 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Match, Prediction } from '../api';
 import { normalizePrediction } from '../api';
 
+const HISTORY_LEN = 20;
+
 interface LiveEvent {
   type: string;
   data: unknown;
   ts: string;
 }
+
+export type ProbHistory = Record<string, Record<string, number[]>>;
 
 function wsURL() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -41,9 +45,23 @@ function mergeMatchUpdate(existing: Match | undefined, data: Record<string, unkn
   } as Match;
 }
 
+function appendHistory(
+  prev: ProbHistory,
+  matchId: string,
+  predictions: Record<string, number>
+): ProbHistory {
+  const next = { ...prev, [matchId]: { ...(prev[matchId] ?? {}) } };
+  for (const [market, value] of Object.entries(predictions)) {
+    const series = [...(next[matchId][market] ?? []), value];
+    next[matchId][market] = series.slice(-HISTORY_LEN);
+  }
+  return next;
+}
+
 export function useLiveWebSocket() {
   const [liveMatches, setLiveMatches] = useState<Match[]>([]);
   const [predictions, setPredictions] = useState<Record<string, Prediction>>({});
+  const [probHistory, setProbHistory] = useState<ProbHistory>({});
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef<number | null>(null);
@@ -83,6 +101,9 @@ export function useLiveWebSocket() {
             const pred = normalizePrediction(msg.data as Record<string, unknown>);
             if (pred.match_id) {
               setPredictions((prev) => ({ ...prev, [pred.match_id]: pred }));
+              if (pred.predictions) {
+                setProbHistory((prev) => appendHistory(prev, pred.match_id, pred.predictions));
+              }
             }
           }
         } catch {
@@ -105,5 +126,5 @@ export function useLiveWebSocket() {
     };
   }, [connect]);
 
-  return { liveMatches, predictions, connected };
+  return { liveMatches, predictions, probHistory, connected };
 }

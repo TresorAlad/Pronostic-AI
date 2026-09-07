@@ -1,12 +1,30 @@
 package odds
 
 import (
+	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/prono/backend/internal/db"
 )
+
+// OddsSummary aggregates bookmaker quotes for one ML market.
+type OddsSummary struct {
+	Best           float64  `json:"best"`
+	Average        float64  `json:"average"`
+	BookmakerCount int      `json:"bookmaker_count"`
+	BestBookmaker  string   `json:"best_bookmaker"`
+	Bookmakers     []string `json:"bookmakers,omitempty"`
+}
+
+// OddTrend describes movement of the best mapped odd between snapshots.
+type OddTrend struct {
+	Direction string  `json:"direction"`
+	Delta     float64 `json:"delta"`
+}
 
 var goalLineRe = regexp.MustCompile(`(over|under)\s*([0-9]+(?:[.,][0-9]+)?)`)
 
@@ -126,17 +144,98 @@ func mapTeamTotal(selection, side string) string {
 
 // BestOddForMarket returns the highest decimal odd for a mapped ML market.
 func BestOddForMarket(matchOdds []db.MatchOdd, mlMarket string) float64 {
+	summary := OddsSummaryForMarket(matchOdds, mlMarket)
+	return summary.Best
+}
+
+// BestBookmakerForMarket returns the bookmaker name offering the best mapped odd.
+func BestBookmakerForMarket(matchOdds []db.MatchOdd, mlMarket string) string {
+	summary := OddsSummaryForMarket(matchOdds, mlMarket)
+	return summary.BestBookmaker
+}
+
+// OddsSummaryForMarket aggregates best, average and bookmaker count for a mapped market.
+func OddsSummaryForMarket(matchOdds []db.MatchOdd, mlMarket string) OddsSummary {
 	var best float64
+	var bestBookmaker string
+	var sum float64
+	var count int
+	seenBookmaker := make(map[string]float64)
+
 	for _, o := range matchOdds {
 		if MapToMLKey(o.Market, o.Selection) != mlMarket || o.Odd <= 1 {
 			continue
 		}
-		if o.Odd > best {
-			best = o.Odd
+		if prev, ok := seenBookmaker[o.Bookmaker]; !ok || o.Odd > prev {
+			seenBookmaker[o.Bookmaker] = o.Odd
 		}
 	}
-	return best
+
+	bookmakers := make([]string, 0, len(seenBookmaker))
+	for bm, odd := range seenBookmaker {
+		bookmakers = append(bookmakers, bm)
+		sum += odd
+		count++
+		if odd > best {
+			best = odd
+			bestBookmaker = bm
+		}
+	}
+
+	avg := 0.0
+	if count > 0 {
+		avg = sum / float64(count)
+	}
+
+	return OddsSummary{
+		Best:           best,
+		Average:        avg,
+		BookmakerCount: count,
+		BestBookmaker:  bestBookmaker,
+		Bookmakers:     bookmakers,
+	}
 }
+
+// OddTrendForMarket compares the two most recent best-odd snapshots for a mapped market.
+func OddTrendForMarket(history []db.MatchOddHistory, mlMarket string) OddTrend {
+	type snapshot struct {
+		at   time.Time
+		best float64
+	}
+	byTime := make(map[int64]float64)
+	for _, h := range history {
+		if MapToMLKey(h.Market, h.Selection) != mlMarket || h.Odd <= 1 {
+			continue
+		}
+		ts := h.FetchedAt.Unix()
+		if h.Odd > byTime[ts] {
+			byTime[ts] = h.Odd
+		}
+	}
+	if len(byTime) < 2 {
+		return OddTrend{Direction: "flat"}
+	}
+
+	snaps := make([]snapshot, 0, len(byTime))
+	for ts, best := range byTime {
+		snaps = append(snaps, snapshot{at: time.Unix(ts, 0), best: best})
+	}
+	sort.Slice(snaps, func(i, j int) bool {
+		return snaps[i].at.Before(snaps[j].at)
+	})
+
+	latest := snaps[len(snaps)-1].best
+	prev := snaps[len(snaps)-2].best
+	delta := latest - prev
+	if delta > 0.01 {
+		return OddTrend{Direction: "up", Delta: math.Round(delta*100) / 100}
+	}
+	if delta < -0.01 {
+		return OddTrend{Direction: "down", Delta: math.Round(delta*100) / 100}
+	}
+	return OddTrend{Direction: "flat", Delta: math.Round(delta*100) / 100}
+}
+
 
 // ValueEdgeForMarket returns ML probability minus implied probability for a mapped market.
 func ValueEdgeForMarket(matchOdds []db.MatchOdd, mlMarket string, mlProb float64) float64 {

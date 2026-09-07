@@ -62,7 +62,7 @@ cd "$ROOT/ai-agent"
 AI_AGENT_PORT="${AI_AGENT_PORT:-5001}" nohup "$PYTHON" -m app.main > /tmp/prono-logs/ai-agent.log 2>&1 &
 echo $! > /tmp/prono-logs/ai-agent.pid
 
-echo "==> Collector live (daemon, sync chaque minute)"
+echo "==> Collector (daemon, sync auto au démarrage et chaque jour)"
 cd "$ROOT/collector"
 nohup go run ./cmd/collector -mode=daemon > /tmp/prono-logs/collector.log 2>&1 &
 echo $! > /tmp/prono-logs/collector.pid

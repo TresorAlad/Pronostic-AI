@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/prono/backend/internal/auth"
 	"github.com/prono/backend/internal/clients"
+	collectorhook "github.com/prono/backend/internal/collector"
 	"github.com/prono/backend/internal/config"
 	"github.com/prono/backend/internal/coupons"
 	"github.com/prono/backend/internal/db"
@@ -52,7 +53,8 @@ func main() {
 	aiClient := clients.NewAIAgentClient(cfg.AIAgentURL)
 
 	authSvc := auth.NewService(store, cfg.JWTSecret, cfg.JWTExpiration)
-	matchHandler := matches.NewHandler(store)
+	collectorTrigger := collectorhook.NewTrigger(cfg.CollectorURL, redisClient)
+	matchHandler := matches.NewHandler(store, collectorTrigger)
 	predHandler := predictions.NewHandler(store, mlClient, aiClient, redisClient)
 	couponHandler := coupons.NewHandler(store, predHandler)
 	evalHandler := evaluation.NewHandler(store)
@@ -93,6 +95,8 @@ func main() {
 		r.Get("/stats/public", statsHandler.Public)
 
 		r.Get("/leagues", matchHandler.ListLeagues)
+		r.Get("/leagues/active", matchHandler.ListActiveLeagues)
+		r.Get("/leagues/tracked", matchHandler.ListTrackedLeagues)
 		r.Route("/matches", func(r chi.Router) {
 			r.Mount("/", matchHandler.Routes())
 			r.With(pronomw.RateLimit(30)).Get("/{id}/prediction", predHandler.GetPrediction)
