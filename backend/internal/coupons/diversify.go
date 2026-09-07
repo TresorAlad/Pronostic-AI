@@ -3,7 +3,11 @@ package coupons
 import (
 	"math"
 	"sort"
+
+	"github.com/prono/backend/internal/markets"
 )
+
+const maxCombinedOdd = 50.0
 
 var categoryPriority = []string{
 	"Temps réglementaire",
@@ -71,7 +75,7 @@ func pickTipsterSelections(candidates []candidate, max int, minConfidence float6
 	for pass := 0; pass < 3; pass++ {
 		for _, cat := range categoryPriority {
 			if len(selected) >= max {
-				return selected
+				return applyCombinedOddCap(selected)
 			}
 			if usedCategories[cat] {
 				continue
@@ -85,7 +89,51 @@ func pickTipsterSelections(candidates []candidate, max int, minConfidence float6
 		}
 	}
 
-	return selected
+	return applyCombinedOddCap(selected)
+}
+
+func applyCombinedOddCap(selected []candidate) []candidate {
+	if len(selected) == 0 {
+		return selected
+	}
+	for {
+		product := combinedOddProduct(selected)
+		if product <= maxCombinedOdd || len(selected) <= 1 {
+			return selected
+		}
+		worstIdx := -1
+		var worstScore float64
+		for i, c := range selected {
+			score := c.Confidence
+			if c.BookmakerOdd > 0 {
+				score = c.Confidence / c.BookmakerOdd
+			}
+			if worstIdx < 0 || score < worstScore {
+				worstIdx = i
+				worstScore = score
+			}
+		}
+		if worstIdx < 0 {
+			return selected[:len(selected)-1]
+		}
+		selected = append(selected[:worstIdx], selected[worstIdx+1:]...)
+	}
+}
+
+func combinedOddProduct(selected []candidate) float64 {
+	product := 1.0
+	for _, c := range selected {
+		odd := c.BookmakerOdd
+		if odd <= 1 {
+			odd = 1 / math.Max(c.Confidence, 0.01)
+		}
+		product *= odd
+	}
+	return product
+}
+
+func CombinedOddProductFromCandidates(selected []candidate) float64 {
+	return combinedOddProduct(selected)
 }
 
 func bestForCategory(candidates []candidate, category string, minConf float64, usedMatches map[string]bool) (candidate, bool) {
@@ -143,4 +191,15 @@ func mergeMarketScores(confidence, predictions map[string]float64) map[string]fl
 		}
 	}
 	return merged
+}
+
+func marketCategory(market string) string {
+	return markets.Category(market)
+}
+
+func marketLabel(market string) string {
+	if label := markets.Label(market); label != "" {
+		return label
+	}
+	return market
 }

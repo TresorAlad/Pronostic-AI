@@ -1,7 +1,6 @@
 package coupons
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,12 +20,14 @@ type Handler struct {
 }
 
 type candidate struct {
-	MatchID    string
-	HomeTeam   string
-	AwayTeam   string
-	Market     string
-	Selection  string
-	Confidence float64
+	MatchID      string
+	HomeTeam     string
+	AwayTeam     string
+	LeagueName   string
+	Market       string
+	Selection    string
+	Confidence   float64
+	BookmakerOdd float64
 }
 
 func NewHandler(store *db.Store, predHandler *predictions.Handler) *Handler {
@@ -60,13 +61,13 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		req.MinConfidence = 0.55
 	}
 	if req.MaxSelections == 0 {
-		req.MaxSelections = 8
+		req.MaxSelections = 10
 	}
 	if req.Name == "" {
 		req.Name = "Coupon IA"
 	}
 
-	matches, err := h.store.GetTop5UpcomingMatches(r.Context(), 15)
+	matches, err := h.store.GetScheduledMatchesForCoupon(r.Context(), 10, 30)
 	if err != nil {
 		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
 		return
@@ -99,21 +100,33 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(pred.Predictions, &preds)
 
 		pool := buildCandidatePool(conf, preds, m.ID, m.HomeTeam.Name, m.AwayTeam.Name)
+		for j := range pool {
+			pool[j].LeagueName = m.LeagueName
+			if matchOdds, err := h.store.GetMatchOdds(r.Context(), m.ID); err == nil {
+				pool[j].BookmakerOdd = odds.BestOddForMarket(matchOdds, pool[j].Market)
+			}
+		}
 		candidates = append(candidates, pool...)
 	}
 
 	picked := pickTipsterSelections(candidates, req.MaxSelections, req.MinConfidence)
+	combinedOdd := CombinedOddProductFromCandidates(picked)
 
 	selections := make([]db.CouponSelection, 0, len(picked))
 	for _, c := range picked {
 		sel := db.CouponSelection{
 			MatchID: c.MatchID, HomeTeam: c.HomeTeam, AwayTeam: c.AwayTeam,
+			LeagueName: c.LeagueName,
 			Market: c.Market, Selection: c.Selection, Confidence: c.Confidence,
 			MarketCategory: marketCategory(c.Market),
 			MarketLabel:    marketLabel(c.Market),
+			BookmakerOdd:   c.BookmakerOdd,
 		}
 		if matchOdds, err := h.store.GetMatchOdds(r.Context(), c.MatchID); err == nil {
 			sel.ValueEdge = odds.ValueEdgeForMarket(matchOdds, c.Market, c.Confidence)
+			if sel.BookmakerOdd <= 1 {
+				sel.BookmakerOdd = odds.BestOddForMarket(matchOdds, c.Market)
+			}
 		}
 		selections = append(selections, sel)
 	}
@@ -126,9 +139,16 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	_ = h.store.CreateNotification(r.Context(), userID, "coupon", "Coupon généré",
 		fmt.Sprintf("Votre coupon « %s » contient %d sélection(s).", req.Name, len(selections)))
 
+	warning := ""
+	if combinedOdd > maxCombinedOdd {
+		warning = "Cote combinée au-dessus du plafond recommandé."
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"id": couponID, "name": req.Name, "selections": selections,
-		"disclaimer": "Estimations statistiques, aucune garantie de gain.",
+		"combined_odd": combinedOdd,
+		"disclaimer":   "Estimations statistiques, aucune garantie de gain.",
+		"warning":      warning,
 	})
 }
 
@@ -171,8 +191,13 @@ func isCouponMarket(market string) bool {
 	return strings.HasPrefix(market, "over_") ||
 		strings.HasPrefix(market, "under_") ||
 		strings.HasPrefix(market, "double_chance_") ||
+		strings.HasPrefix(market, "team_over_") ||
+		strings.HasPrefix(market, "result_btts_") ||
+		strings.HasPrefix(market, "draw_no_bet_") ||
+		strings.HasPrefix(market, "corner_winner_") ||
 		market == "home_win" || market == "draw" || market == "away_win" ||
 		market == "btts" || market == "btts_no" ||
+		market == "over_0_5_ht" ||
 		strings.HasPrefix(market, "home_possession_") || strings.HasPrefix(market, "away_possession_")
 }
 
@@ -187,44 +212,5 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ExportMine(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.UserIDFromContext(r.Context())
-	if !ok {
-		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
-		return
-	}
-	id := chi.URLParam(r, "id")
-	coupon, err := h.store.GetCouponForUser(r.Context(), id, userID)
-	if err != nil {
-		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
-		return
-	}
-	format := strings.ToLower(r.URL.Query().Get("format"))
-	if format == "" {
-		format = "json"
-	}
-	switch format {
-	case "csv":
-		w.Header().Set("Content-Type", "text/csv")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"coupon-%s.csv\"", id))
-		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"home_team", "away_team", "market", "selection", "confidence"})
-		selections, _ := coupon["selections"].([]map[string]interface{})
-		for _, sel := range selections {
-			_ = cw.Write([]string{
-				fmt.Sprint(sel["home_team"]), fmt.Sprint(sel["away_team"]),
-				fmt.Sprint(sel["market"]), fmt.Sprint(sel["selection"]),
-				fmt.Sprint(sel["confidence"]),
-			})
-		}
-		cw.Flush()
-	default:
-		data, err := db.CouponToExportJSON(coupon)
-		if err != nil {
-			http.Error(w, `{"error":"export failed"}`, http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"coupon-%s.json\"", id))
-		w.Write(data)
-	}
+	http.Error(w, `{"error":"use client PDF export"}`, http.StatusGone)
 }

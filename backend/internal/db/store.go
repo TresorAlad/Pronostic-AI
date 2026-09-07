@@ -101,12 +101,14 @@ type CouponSelection struct {
 	MatchID        string  `json:"match_id"`
 	HomeTeam       string  `json:"home_team"`
 	AwayTeam       string  `json:"away_team"`
+	LeagueName     string  `json:"league_name,omitempty"`
 	Market         string  `json:"market"`
 	Selection      string  `json:"selection"`
 	MarketCategory string  `json:"market_category,omitempty"`
 	MarketLabel    string  `json:"market_label,omitempty"`
 	Confidence     float64 `json:"confidence"`
 	ValueEdge      float64 `json:"value_edge,omitempty"`
+	BookmakerOdd   float64 `json:"bookmaker_odd,omitempty"`
 }
 
 type ModelPerformance struct {
@@ -512,6 +514,73 @@ func (s *Store) GetUpcomingMatchesWithPredictions(ctx context.Context, limit int
 
 func (s *Store) GetTop5UpcomingMatches(ctx context.Context, limit int) ([]Match, error) {
 	return s.getTop5UpcomingMatches(ctx, limit, false)
+}
+
+func (s *Store) GetScheduledMatchesForCoupon(ctx context.Context, minMatches, maxMatches int) ([]Match, error) {
+	if minMatches <= 0 {
+		minMatches = 10
+	}
+	if maxMatches <= 0 {
+		maxMatches = 30
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.id, m.external_id, m.league_id, l.name,
+			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
+			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
+			m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
+			COALESCE(m.venue,''), COALESCE(m.round,'')
+		FROM matches m
+		JOIN leagues l ON l.id = m.league_id
+		JOIN teams ht ON ht.id = m.home_team_id
+		JOIN teams at ON at.id = m.away_team_id
+		WHERE m.status = 'scheduled'
+		  AND l.external_id IN (39, 140, 135, 78, 61, 3, 848, 40)
+		  AND m.kickoff_at BETWEEN CURRENT_DATE AND NOW() + INTERVAL '7 days'
+		ORDER BY
+			CASE WHEN l.external_id IN (39, 140, 135, 78, 61) THEN 0 ELSE 1 END,
+			CASE WHEN m.kickoff_at::date = CURRENT_DATE THEN 0 ELSE 1 END,
+			m.kickoff_at
+		LIMIT $1
+	`, maxMatches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	matches, err := scanMatches(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) >= minMatches {
+		return matches, nil
+	}
+	return matches, nil
+}
+
+func (s *Store) GetMatchesTodayScheduled(ctx context.Context) ([]Match, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.id, m.external_id, m.league_id, l.name,
+			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
+			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
+			m.kickoff_at, m.status::text, m.minute, m.home_score, m.away_score,
+			COALESCE(m.venue,''), COALESCE(m.round,'')
+		FROM matches m
+		JOIN leagues l ON l.id = m.league_id
+		JOIN teams ht ON ht.id = m.home_team_id
+		JOIN teams at ON at.id = m.away_team_id
+		WHERE l.external_id IN (39, 140, 135, 78, 61)
+		  AND m.status = 'scheduled'
+		  AND (
+		    m.kickoff_at::date = CURRENT_DATE
+		    OR (m.kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '7 days')
+		  )
+		ORDER BY m.kickoff_at
+		LIMIT 50
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMatches(rows)
 }
 
 func (s *Store) getTop5UpcomingMatches(ctx context.Context, limit int, includeLive bool) ([]Match, error) {

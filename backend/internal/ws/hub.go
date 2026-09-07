@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -122,10 +123,15 @@ type LiveService struct {
 	store       *db.Store
 	predictions *predictions.Handler
 	redis       *redis.Client
+	prevPred    map[string]map[string]float64
+	predMu      sync.Mutex
 }
 
 func NewLiveService(hub *Hub, store *db.Store, pred *predictions.Handler, redis *redis.Client) *LiveService {
-	return &LiveService{hub: hub, store: store, predictions: pred, redis: redis}
+	return &LiveService{
+		hub: hub, store: store, predictions: pred, redis: redis,
+		prevPred: make(map[string]map[string]float64),
+	}
 }
 
 func (ls *LiveService) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +146,8 @@ func (ls *LiveService) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ls *LiveService) StartPolling(ctx context.Context, interval time.Duration) {
+	go ls.subscribeRedis(ctx)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -149,6 +157,23 @@ func (ls *LiveService) StartPolling(ctx context.Context, interval time.Duration)
 			return
 		case <-ticker.C:
 			ls.pollLiveMatches(ctx)
+		}
+	}
+}
+
+func (ls *LiveService) subscribeRedis(ctx context.Context) {
+	pubsub := ls.redis.Subscribe(ctx, "ws:broadcast")
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = pubsub.Close()
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			ls.hub.broadcast <- []byte(msg.Payload)
 		}
 	}
 }
@@ -174,14 +199,10 @@ func (ls *LiveService) pollLiveMatches(ctx context.Context) {
 				"away_score":  match.AwayScore,
 				"status":      match.Status,
 				"home_team": map[string]interface{}{
-					"id":       match.HomeTeam.ID,
-					"name":     match.HomeTeam.Name,
-					"logo_url": match.HomeTeam.LogoURL,
+					"id": match.HomeTeam.ID, "name": match.HomeTeam.Name, "logo_url": match.HomeTeam.LogoURL,
 				},
 				"away_team": map[string]interface{}{
-					"id":       match.AwayTeam.ID,
-					"name":     match.AwayTeam.Name,
-					"logo_url": match.AwayTeam.LogoURL,
+					"id": match.AwayTeam.ID, "name": match.AwayTeam.Name, "logo_url": match.AwayTeam.LogoURL,
 				},
 			})
 			ls.hub.BroadcastEvent("match_update", json.RawMessage(data))
@@ -192,6 +213,46 @@ func (ls *LiveService) pollLiveMatches(ctx context.Context) {
 			log.Printf("Live prediction error for %s: %v", match.ID, err)
 			continue
 		}
-		ls.hub.BroadcastEvent("prediction_update", pred)
+		ls.broadcastPredictionUpdate(match.ID, pred, match.Minute)
 	}
+}
+
+func (ls *LiveService) broadcastPredictionUpdate(matchID string, pred *db.Prediction, minute *int) {
+	var preds map[string]float64
+	_ = json.Unmarshal(pred.Predictions, &preds)
+
+	delta := map[string]float64{}
+	ls.predMu.Lock()
+	prev := ls.prevPred[matchID]
+	for k, v := range preds {
+		if prev != nil {
+			if d := v - prev[k]; math.Abs(d) >= 0.01 {
+				delta[k] = math.Round(d*1000) / 1000
+			}
+		}
+	}
+	next := make(map[string]float64, len(preds))
+	for k, v := range preds {
+		next[k] = v
+	}
+	ls.prevPred[matchID] = next
+	ls.predMu.Unlock()
+
+	payload := map[string]interface{}{
+		"match_id":       matchID,
+		"id":             pred.ID,
+		"model_version":  pred.ModelVersion,
+		"predictions":    preds,
+		"is_live":        true,
+		"delta":          delta,
+		"no_bet_recommended": pred.NoBetRecommended,
+	}
+	if minute != nil {
+		payload["minute"] = *minute
+	}
+	var conf map[string]float64
+	if json.Unmarshal(pred.Confidence, &conf) == nil {
+		payload["confidence"] = conf
+	}
+	ls.hub.BroadcastEvent("prediction_update", payload)
 }

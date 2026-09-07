@@ -2,11 +2,30 @@ package odds
 
 import "testing"
 
-func TestMapToMLKey1X2(t *testing.T) {
-	if got := MapToMLKey("Match Winner", "Home"); got != "home_win" {
-		t.Fatalf("expected home_win, got %q", got)
+func TestMapGoalsOver25(t *testing.T) {
+	key := MapToMLKey("Goals Over/Under", "Over 2.5")
+	if key != "over_2_5" {
+		t.Fatalf("expected over_2_5, got %q", key)
 	}
-	if got := MapToMLKey("Both Teams Score", "Yes"); got != "btts" {
-		t.Fatalf("expected btts, got %q", got)
+}
+
+func TestMapBTTSNo(t *testing.T) {
+	key := MapToMLKey("Both Teams Score", "No")
+	if key != "btts_no" {
+		t.Fatalf("expected btts_no, got %q", key)
+	}
+}
+
+func TestMapDoubleChance(t *testing.T) {
+	key := MapToMLKey("Double Chance", "Home/Draw")
+	if key != "double_chance_1x" {
+		t.Fatalf("expected double_chance_1x, got %q", key)
+	}
+}
+
+func TestMapTeamTotalHome(t *testing.T) {
+	key := MapToMLKey("Total - Home", "Over 0.5")
+	if key != "team_over_0_5_home" {
+		t.Fatalf("expected team_over_0_5_home, got %q", key)
 	}
 }

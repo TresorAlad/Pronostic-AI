@@ -1,18 +1,31 @@
 export const MARKET_LABELS: Record<string, string> = {
   home_win: 'Victoire domicile',
   draw: 'Match nul',
-  away_win: 'Victoire extérieur',
+  away_win: 'Victoire extérieure',
   over_1_5: 'Plus de 1,5 buts',
   over_2_5: 'Plus de 2,5 buts',
   over_3_5: 'Plus de 3,5 buts',
   under_1_5: 'Moins de 1,5 buts',
   under_2_5: 'Moins de 2,5 buts',
   btts: 'Les deux équipes marquent',
+  btts_no: 'Les deux équipes ne marquent pas',
+  team_over_0_5_home: 'Domicile marque au moins 1 but',
+  team_over_1_5_home: 'Domicile marque plus de 1,5 buts',
+  team_over_0_5_away: 'Extérieur marque au moins 1 but',
+  team_over_1_5_away: 'Extérieur marque plus de 1,5 buts',
+  result_btts_home_yes: 'Victoire domicile et les deux équipes marquent',
+  result_btts_draw_yes: 'Match nul et les deux équipes marquent',
+  result_btts_away_yes: 'Victoire extérieure et les deux équipes marquent',
+  over_0_5_ht: 'Plus de 0,5 but en première mi-temps',
+  draw_no_bet_home: 'Victoire domicile (remboursé si nul)',
+  draw_no_bet_away: 'Victoire extérieure (remboursé si nul)',
   double_chance_1x: 'Double chance 1X (domicile ou nul)',
   double_chance_x2: 'Double chance X2 (nul ou extérieur)',
   double_chance_12: 'Double chance 12 (pas de nul)',
   over_corners_9_5: 'Plus de 9,5 corners',
   'over_corners_9.5': 'Plus de 9,5 corners',
+  corner_winner_home: 'Domicile gagne aux corners',
+  corner_winner_away: 'Extérieur gagne aux corners',
   over_shots_22_5: 'Plus de 22,5 tirs',
   over_shots_on_target_8_5: 'Plus de 8,5 tirs cadrés',
   over_fouls_20_5: 'Plus de 20,5 fautes',
@@ -35,11 +48,36 @@ export const MARKET_LABELS: Record<string, string> = {
 export const MARKET_CATEGORIES: { title: string; markets: string[] }[] = [
   {
     title: 'Temps réglementaire',
-    markets: ['home_win', 'draw', 'away_win', 'double_chance_1x', 'double_chance_x2', 'double_chance_12'],
+    markets: [
+      'home_win',
+      'draw',
+      'away_win',
+      'double_chance_1x',
+      'double_chance_x2',
+      'double_chance_12',
+      'draw_no_bet_home',
+      'draw_no_bet_away',
+    ],
   },
   {
     title: 'Buts',
-    markets: ['over_1_5', 'over_2_5', 'over_3_5', 'under_1_5', 'under_2_5', 'btts', 'btts_no'],
+    markets: [
+      'over_1_5',
+      'over_2_5',
+      'over_3_5',
+      'under_1_5',
+      'under_2_5',
+      'btts',
+      'btts_no',
+      'team_over_0_5_home',
+      'team_over_1_5_home',
+      'team_over_0_5_away',
+      'team_over_1_5_away',
+      'result_btts_home_yes',
+      'result_btts_draw_yes',
+      'result_btts_away_yes',
+      'over_0_5_ht',
+    ],
   },
   {
     title: 'Tirs',
@@ -47,7 +85,7 @@ export const MARKET_CATEGORIES: { title: string; markets: string[] }[] = [
   },
   {
     title: 'Corners',
-    markets: ['over_corners_9_5', 'over_corners_9.5', 'predicted_total_corners'],
+    markets: ['over_corners_9_5', 'over_corners_9.5', 'corner_winner_home', 'corner_winner_away', 'predicted_total_corners'],
   },
   {
     title: 'Cartons',
@@ -68,7 +106,10 @@ export const MARKET_CATEGORIES: { title: string; markets: string[] }[] = [
 ];
 
 export function marketLabel(key: string): string {
-  return MARKET_LABELS[key] ?? key.replace(/_/g, ' ');
+  if (MARKET_LABELS[key]) return MARKET_LABELS[key];
+  const normalized = key.replace('.', '_');
+  if (MARKET_LABELS[normalized]) return MARKET_LABELS[normalized];
+  return key.replace(/_/g, ' ');
 }
 
 const CATEGORY_BY_MARKET = new Map<string, string>(
@@ -76,17 +117,18 @@ const CATEGORY_BY_MARKET = new Map<string, string>(
 );
 
 export function marketCategory(key: string): string {
-  const direct = CATEGORY_BY_MARKET.get(key);
+  const direct = CATEGORY_BY_MARKET.get(key) ?? CATEGORY_BY_MARKET.get(key.replace('.', '_'));
   if (direct) return direct;
 
-  if (key.startsWith('double_chance_')) return 'Temps réglementaire';
+  if (key.startsWith('double_chance_') || key.startsWith('draw_no_bet_')) return 'Temps réglementaire';
   if (key === 'home_win' || key === 'draw' || key === 'away_win') return 'Temps réglementaire';
-  if (key.includes('corners')) return 'Corners';
+  if (key.includes('corners') || key.startsWith('corner_winner_')) return 'Corners';
   if (key.includes('shots')) return 'Tirs';
   if (key.includes('cards')) return 'Cartons';
   if (key.includes('fouls')) return 'Fautes';
   if (key.includes('offsides')) return 'Hors-jeu';
   if (key.includes('possession')) return 'Possession';
+  if (key.startsWith('team_over_') || key.startsWith('result_btts_') || key.startsWith('over_0_5_ht')) return 'Buts';
   if (key.startsWith('over_') || key.startsWith('under_') || key.startsWith('btts')) return 'Buts';
   return 'Autre';
 }
@@ -121,7 +163,7 @@ export function groupPredictions(predictions: Record<string, number> | null | un
   }).filter((g) => g.items.length > 0);
 
   const other = Object.entries(predictions)
-    .filter(([k]) => !used.has(k) && !k.startsWith('double_chance_'))
+    .filter(([k]) => !used.has(k) && !k.startsWith('double_chance_') && !k.startsWith('predicted_'))
     .map(([key, value]) => ({ key, value }));
 
   if (other.length > 0) {

@@ -27,23 +27,27 @@ export interface Prediction {
   model_version: string;
   predictions: Record<string, number>;
   confidence: Record<string, number>;
-    no_bet_recommended: bool;
+  no_bet_recommended: boolean;
   ai_analysis?: string;
   ai_reasons?: string[];
   ai_abstain?: boolean;
   is_live?: boolean;
+  delta?: Record<string, number>;
+  minute?: number;
 }
 
 export interface CouponSelection {
   match_id: string;
   home_team: string;
   away_team: string;
+  league_name?: string;
   market: string;
   selection: string;
   market_category?: string;
   market_label?: string;
   confidence: number;
   value_edge?: number;
+  bookmaker_odd?: number;
 }
 
 export interface ModelPerformance {
@@ -146,6 +150,7 @@ export function normalizePrediction(raw: Record<string, unknown>): Prediction {
     ...(raw as unknown as Prediction),
     predictions: parseRecord(raw.predictions),
     confidence: parseRecord(raw.confidence),
+    delta: parseRecord(raw.delta),
     ai_reasons: Array.isArray(raw.ai_reasons) ? (raw.ai_reasons as string[]) : undefined,
   };
 }
@@ -172,7 +177,8 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getMatchesToday: () => fetchAPI<Match[]>('/matches/today'),
+  getMatchesToday: (scheduledOnly = false) =>
+    fetchAPI<Match[]>(`/matches/today${scheduledOnly ? '?scheduled_only=true' : ''}`),
   getLiveMatches: () => fetchAPI<Match[]>('/matches/live'),
   getMatch: (id: string) => fetchAPI<Match>(`/matches/${id}`),
   getMatchStats: (id: string) => fetchAPI<unknown[]>(`/matches/${id}/stats`),
@@ -188,14 +194,17 @@ export const api = {
     fetchAPI<{ evaluated: number; message: string }>('/evaluation/run', { method: 'POST' }),
   getMyCoupons: () => fetchAPI<SavedCouponSummary[]>('/coupons/mine'),
   getMyCoupon: (id: string) => fetchAPI<Record<string, unknown>>(`/coupons/mine/${id}`),
-  generateCoupon: (minConfidence = 0.55, maxSelections = 8) =>
-    fetchAPI<{ id: string; selections: CouponSelection[] | null; disclaimer: string }>(
-      '/coupons/generate',
-      {
-        method: 'POST',
-        body: JSON.stringify({ min_confidence: minConfidence, max_selections: maxSelections }),
-      }
-    ),
+  generateCoupon: (minConfidence = 0.55, maxSelections = 10) =>
+    fetchAPI<{
+      id: string;
+      selections: CouponSelection[] | null;
+      disclaimer: string;
+      combined_odd?: number;
+      warning?: string;
+    }>('/coupons/generate', {
+      method: 'POST',
+      body: JSON.stringify({ min_confidence: minConfidence, max_selections: maxSelections }),
+    }),
   login: (email: string, password: string) =>
     fetchAPI<AuthResponse>('/auth/login', {
       method: 'POST',
@@ -220,47 +229,6 @@ export const api = {
     fetchAPI<void>(`/notifications/${id}/read`, { method: 'PATCH' }),
   getMyPerformance: () => fetchAPI<UserPerformanceData>('/performance/mine'),
   getMatchOdds: (id: string) => fetchAPI<MatchOddRow[]>(`/matches/${id}/odds`),
-  exportCouponUrl: (id: string, format: 'json' | 'csv' = 'json') => {
-    const base = API_URL.replace(/\/$/, '');
-    return `${base}/coupons/mine/${id}/export?format=${format}`;
-  },
-  downloadCoupon: async (id: string, format: 'json' | 'csv' = 'json') => {
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_URL}/coupons/mine/${id}/export?format=${format}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) throw new Error('Export impossible');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `coupon-${id}.${format}`;
-    a.click();
-    URL.revokeObjectURL(url);
-  },
-  printCoupon: (coupon: {
-    id: string;
-    name?: string;
-    selections: CouponSelection[];
-    disclaimer?: string;
-  }) => {
-    const lines = coupon.selections
-      .map(
-        (sel, i) =>
-          `<tr><td>${i + 1}</td><td>${sel.home_team} vs ${sel.away_team}</td><td>${sel.market_label ?? sel.selection}</td><td>${Math.round(sel.confidence * 100)}%</td></tr>`
-      )
-      .join('');
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Coupon ${coupon.id}</title>
-      <style>body{font-family:sans-serif;padding:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px}</style>
-      </head><body><h1>Coupon IA</h1><table><thead><tr><th>#</th><th>Match</th><th>Sélection</th><th>Confiance</th></tr></thead><tbody>${lines}</tbody></table>
-      <p style="font-size:12px;color:#666;margin-top:16px">${coupon.disclaimer ?? ''}</p></body></html>`;
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    w.print();
-  },
 };
 
 export function confidenceBadge(confidence: number) {
@@ -271,6 +239,10 @@ export function confidenceBadge(confidence: number) {
 
 export function formatProbability(p: number) {
   return `${Math.round(p * 100)}%`;
+}
+
+export function formatOdd(n: number) {
+  return n.toFixed(2).replace('.', ',');
 }
 
 export function isLoggedIn() {

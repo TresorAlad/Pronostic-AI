@@ -153,13 +153,40 @@ class ModelRegistry:
 def _adjust_live_predictions(predictions: dict, features: dict) -> dict:
     minute = features.get("minute", 0)
     current_goals = features.get("current_total_goals", 0)
+    home_score = features.get("home_score", 0)
+    away_score = features.get("away_score", 0)
+    remaining_factor = max(0.05, (90 - minute) / 90) if minute > 0 else 1.0
+
     if minute > 0 and "over_2_5" in predictions:
-        remaining_factor = (90 - minute) / 90
         adjusted = predictions["over_2_5"]
         if current_goals >= 3:
             predictions["over_2_5"] = 1.0
         elif current_goals == 2:
             predictions["over_2_5"] = max(adjusted, 0.7)
         else:
-            predictions["over_2_5"] = adjusted * (1 + (1 - remaining_factor) * 0.2)
+            predictions["over_2_5"] = min(0.95, adjusted * (1 + (1 - remaining_factor) * 0.25))
+
+    if minute > 0 and "btts" in predictions:
+        if home_score > 0 and away_score > 0:
+            predictions["btts"] = 1.0
+            predictions["btts_no"] = 0.0
+        elif minute > 70 and current_goals == 0:
+            predictions["btts"] = predictions["btts"] * 0.6
+        elif current_goals == 1:
+            predictions["btts"] = min(0.95, predictions["btts"] * 1.15)
+
+    if minute > 0 and "home_win" in predictions:
+        diff = home_score - away_score
+        if diff > 0:
+            predictions["home_win"] = min(0.98, predictions["home_win"] + 0.1 * (minute / 90))
+            predictions["away_win"] = max(0.02, predictions.get("away_win", 0) * 0.7)
+        elif diff < 0:
+            predictions["away_win"] = min(0.98, predictions.get("away_win", 0) + 0.1 * (minute / 90))
+            predictions["home_win"] = max(0.02, predictions["home_win"] * 0.7)
+        if minute > 75 and diff == 0:
+            predictions["draw"] = min(0.95, predictions.get("draw", 0) + 0.15)
+
+    if minute > 0 and "over_1_5" in predictions and current_goals >= 1:
+        predictions["over_1_5"] = 1.0
+
     return predictions

@@ -28,7 +28,13 @@ func (h *Handler) Routes() chi.Router {
 }
 
 func (h *Handler) GetToday(w http.ResponseWriter, r *http.Request) {
-	matches, err := h.store.GetMatchesToday(r.Context())
+	var matches []db.Match
+	var err error
+	if r.URL.Query().Get("scheduled_only") == "true" {
+		matches, err = h.store.GetMatchesTodayScheduled(r.Context())
+	} else {
+		matches, err = h.store.GetMatchesToday(r.Context())
+	}
 	if err != nil {
 		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
 		return

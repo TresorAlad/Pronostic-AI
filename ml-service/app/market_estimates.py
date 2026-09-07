@@ -98,5 +98,50 @@ def enrich_derived_markets(predictions: dict, features: dict) -> tuple[dict, dic
         extra_preds["btts_no"] = 1.0 - predictions["btts"]
         extra_conf["btts_no"] = extra_preds["btts_no"]
 
+    if "home_win" in predictions and "draw" in predictions:
+        home = predictions["home_win"]
+        draw = predictions["draw"]
+        dnb_home = home / max(home + draw, 0.01)
+        dnb_away = predictions.get("away_win", 0) / max(predictions.get("away_win", 0) + draw, 0.01)
+        extra_preds["draw_no_bet_home"] = min(0.95, dnb_home)
+        extra_preds["draw_no_bet_away"] = min(0.95, dnb_away)
+        extra_conf["draw_no_bet_home"] = extra_preds["draw_no_bet_home"]
+        extra_conf["draw_no_bet_away"] = extra_preds["draw_no_bet_away"]
+
+    if _stats_ready(features):
+        home_goals = float(features.get("home_goals_avg_5", 0))
+        away_goals = float(features.get("away_goals_avg_5", 0))
+        if home_goals > 0:
+            for line, key in ((0.5, "team_over_0_5_home"), (1.5, "team_over_1_5_home")):
+                prob = _over_prob(home_goals, line, scale=0.8)
+                extra_preds[key] = prob
+                extra_conf[key] = prob
+        if away_goals > 0:
+            for line, key in ((0.5, "team_over_0_5_away"), (1.5, "team_over_1_5_away")):
+                prob = _over_prob(away_goals, line, scale=0.8)
+                extra_preds[key] = prob
+                extra_conf[key] = prob
+
+        if _has_stat(features, "home_corners_avg_5") and _has_stat(features, "away_corners_avg_5"):
+            if float(features["home_corners_avg_5"]) > float(features["away_corners_avg_5"]):
+                prob = _side_prob(float(features["home_corners_avg_5"]) - float(features["away_corners_avg_5"]), 0.5, scale=1.5)
+            else:
+                prob = 1.0 - _side_prob(float(features["away_corners_avg_5"]) - float(features["home_corners_avg_5"]), 0.5, scale=1.5)
+            extra_preds["corner_winner_home"] = prob
+            extra_preds["corner_winner_away"] = 1.0 - prob
+            extra_conf["corner_winner_home"] = prob
+            extra_conf["corner_winner_away"] = 1.0 - prob
+
+        if "home_win" in predictions and "btts" in predictions:
+            hw, bt = predictions["home_win"], predictions["btts"]
+            extra_preds["result_btts_home_yes"] = hw * bt
+            extra_conf["result_btts_home_yes"] = extra_preds["result_btts_home_yes"]
+            if "draw" in predictions:
+                extra_preds["result_btts_draw_yes"] = predictions["draw"] * bt
+                extra_conf["result_btts_draw_yes"] = extra_preds["result_btts_draw_yes"]
+            if "away_win" in predictions:
+                extra_preds["result_btts_away_yes"] = predictions["away_win"] * bt
+                extra_conf["result_btts_away_yes"] = extra_preds["result_btts_away_yes"]
+
     merged_preds = {**predictions, **extra_preds}
     return merged_preds, extra_conf

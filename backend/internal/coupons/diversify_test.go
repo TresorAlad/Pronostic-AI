@@ -17,6 +17,19 @@ func TestBuildPoolIncludesCornersKey(t *testing.T) {
 	}
 }
 
+func TestApplyCombinedOddCap(t *testing.T) {
+	selected := []candidate{
+		{MatchID: "m1", Market: "home_win", Confidence: 0.7, BookmakerOdd: 5},
+		{MatchID: "m2", Market: "over_2_5", Confidence: 0.65, BookmakerOdd: 6},
+		{MatchID: "m3", Market: "btts", Confidence: 0.6, BookmakerOdd: 2},
+	}
+	out := applyCombinedOddCap(selected)
+	product := combinedOddProduct(out)
+	if product > maxCombinedOdd {
+		t.Fatalf("expected product <= 50, got %f with %d picks", product, len(out))
+	}
+}
+
 func TestPickTipsterFourMatches(t *testing.T) {
 	candidates := []candidate{
 		{MatchID: "m1", Market: "double_chance_12", Confidence: 0.88},

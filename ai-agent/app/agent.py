@@ -98,7 +98,7 @@ def _get_llm():
     if provider == "mistral":
         from langchain_mistralai import ChatMistralAI
 
-        api_key = os.getenv("MISTRAL_API_KEY") or os.getenv("LLM_API_KEY")
+        api_key = os.gvetenv("MISTRAL_API_KEY") or os.getenv("LLM_API_KEY")
         if not api_key:
             raise ValueError("MISTRAL_API_KEY manquante")
         return ChatMistralAI(

@@ -65,7 +65,7 @@ func main() {
 	go hub.Run()
 
 	liveSvc := ws.NewLiveService(hub, store, predHandler, redisClient)
-	go liveSvc.StartPolling(ctx, 30*time.Second)
+	go liveSvc.StartPolling(ctx, 10*time.Second)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)

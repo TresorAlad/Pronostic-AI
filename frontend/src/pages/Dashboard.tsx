@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, confidenceBadge, formatProbability } from '../api';
 import MatchTeams from '../components/MatchTeams';
 import FilterSelect, { FilterDate } from '../components/FilterSelect';
+import { useMatchStatusWebSocket } from '../hooks/useMatchStatusWebSocket';
 
 type StatusFilter = 'all' | 'scheduled' | 'live' | 'finished';
 
@@ -15,14 +16,28 @@ const STATUS_OPTIONS = [
 ];
 
 export default function Dashboard() {
+  const queryClient = useQueryClient();
   const [leagueFilter, setLeagueFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('scheduled');
   const [dateFilter, setDateFilter] = useState('');
 
   const { data: matches, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['matches-today'],
-    queryFn: api.getMatchesToday,
+    queryKey: ['matches-today', statusFilter === 'scheduled'],
+    queryFn: () => api.getMatchesToday(statusFilter === 'scheduled'),
     refetchInterval: 60000,
+  });
+
+  const { data: liveMatches } = useQuery({
+    queryKey: ['live-matches-count'],
+    queryFn: api.getLiveMatches,
+    refetchInterval: 30000,
+  });
+
+  useMatchStatusWebSocket((event) => {
+    if (event.to === 'live') {
+      queryClient.invalidateQueries({ queryKey: ['matches-today'] });
+      queryClient.invalidateQueries({ queryKey: ['live-matches-count'] });
+    }
   });
 
   const hasMatches = (matches?.length ?? 0) > 0;
@@ -68,6 +83,11 @@ export default function Dashboard() {
           <p className="page-subtitle">
             Top 5 européen · Prédictions basées sur le machine learning et les stats réelles
           </p>
+          {(liveMatches?.length ?? 0) > 0 && (
+            <Link to="/live" className="text-sm text-brand-dark dark:text-brand-light mt-2 inline-block">
+              {liveMatches!.length} match(s) en live →
+            </Link>
+          )}
         </div>
         <button onClick={() => refetch()} disabled={isFetching} className="btn-secondary shrink-0 text-sm">
           {isFetching ? 'Actualisation...' : 'Actualiser'}

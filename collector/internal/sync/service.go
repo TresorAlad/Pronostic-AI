@@ -114,10 +114,13 @@ func (s *Service) SyncLive(ctx context.Context) error {
 		matchID, err := s.store.GetMatchIDByExternal(ctx, f.Fixture.ID)
 		if err == nil {
 			liveKey := "live:match:" + matchID
-			liveData := fmt.Sprintf(`{"minute":%d,"home_score":%v,"away_score":%v}`,
-				f.Fixture.Status.Elapsed, ptrInt(f.Goals.Home), ptrInt(f.Goals.Away))
+			liveData := fmt.Sprintf(`{"id":"%s","match_id":"%s","minute":%d,"home_score":%v,"away_score":%v,"status":"live"}`,
+				matchID, matchID, f.Fixture.Status.Elapsed, ptrInt(f.Goals.Home), ptrInt(f.Goals.Away))
 			s.redis.Set(ctx, liveKey, liveData, 5*time.Minute)
 			s.redis.Del(ctx, "prediction:"+matchID)
+			statusEvent := fmt.Sprintf(`{"type":"match_status_change","data":{"match_id":"%s","from":"scheduled","to":"live","minute":%d},"ts":"%s"}`,
+				matchID, f.Fixture.Status.Elapsed, time.Now().UTC().Format(time.RFC3339))
+			s.redis.Publish(ctx, "ws:broadcast", statusEvent)
 		}
 
 		synced++

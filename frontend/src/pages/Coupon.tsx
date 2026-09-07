@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { api, confidenceBadge, formatProbability, type CouponSelection } from '../api';
+import { api, confidenceBadge, formatOdd, formatProbability, type CouponSelection } from '../api';
 import { useAuth } from '../hooks/useAuth';
+import { exportCouponPdf } from '../utils/couponPdf';
 import { marketCategory, marketCategoryClass, marketLabel } from '../utils/marketLabels';
 
 const SLIDER_MIN = 50;
@@ -14,13 +15,15 @@ function clampConfidencePercent(value: number) {
 
 export default function Coupon() {
   const navigate = useNavigate();
-  const { isAuthenticated, loading, refresh } = useAuth();
+  const { isAuthenticated, loading, refresh, user } = useAuth();
   const [minConfidence, setMinConfidence] = useState(0.55);
   const confidencePercent = clampConfidencePercent(Math.round(minConfidence * 100));
   const [coupon, setCoupon] = useState<{
     id: string;
     selections: CouponSelection[];
     disclaimer: string;
+    combined_odd?: number;
+    warning?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -30,11 +33,13 @@ export default function Coupon() {
   }, [isAuthenticated, loading, navigate]);
 
   const generate = useMutation({
-    mutationFn: () => api.generateCoupon(minConfidence, 8),
+    mutationFn: () => api.generateCoupon(minConfidence, 10),
     onSuccess: (data) => {
       setCoupon({
         id: data.id,
         disclaimer: data.disclaimer ?? '',
+        combined_odd: data.combined_odd,
+        warning: data.warning,
         selections: Array.isArray(data.selections) ? data.selections : [],
       });
       refresh();
@@ -48,8 +53,7 @@ export default function Coupon() {
       <div className="mb-8">
         <h1 className="page-title">Coupon IA</h1>
         <p className="page-subtitle">
-          Coupon type pronostiqueur : une sélection par catégorie (temps réglementaire, buts, BTTS,
-          double chance, tirs, corners, cartons, fautes, hors-jeu, possession).
+          Jusqu&apos;à 10 sélections par journée · cote combinée max 50 · export PDF brandé.
         </p>
       </div>
 
@@ -98,37 +102,31 @@ export default function Coupon() {
       {coupon && (
         <div className="card">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <h3 className="font-display text-lg font-semibold text-heading">Coupon généré</h3>
+            <div>
+              <h3 className="font-display text-lg font-semibold text-heading">Coupon généré</h3>
+              {coupon.combined_odd != null && coupon.selections.length > 0 && (
+                <p className="text-sm text-brand-dark dark:text-brand-light mt-1">
+                  Cote combinée : {formatOdd(coupon.combined_odd)} / 50
+                </p>
+              )}
+              {coupon.warning && <p className="text-xs text-amber-400 mt-1">{coupon.warning}</p>}
+            </div>
             {coupon.selections.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="btn-secondary text-xs py-1 px-2"
-                  onClick={() => api.downloadCoupon(coupon.id, 'json')}
-                >
-                  JSON
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary text-xs py-1 px-2"
-                  onClick={() => api.downloadCoupon(coupon.id, 'csv')}
-                >
-                  CSV
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary text-xs py-1 px-2"
-                  onClick={() =>
-                    api.printCoupon({
-                      id: coupon.id,
-                      selections: coupon.selections,
-                      disclaimer: coupon.disclaimer,
-                    })
-                  }
-                >
-                  PDF
-                </button>
-              </div>
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() =>
+                  exportCouponPdf({
+                    id: coupon.id,
+                    selections: coupon.selections,
+                    combinedOdd: coupon.combined_odd,
+                    disclaimer: coupon.disclaimer,
+                    userName: user?.display_name,
+                  })
+                }
+              >
+                Exporter PDF
+              </button>
             )}
           </div>
           {(coupon.selections?.length ?? 0) === 0 ? (
@@ -155,6 +153,9 @@ export default function Coupon() {
                         {category}
                       </span>
                       <p className="text-sm text-slate-300 mt-2">{label}</p>
+                      {sel.bookmaker_odd != null && sel.bookmaker_odd > 1 && (
+                        <p className="text-xs text-slate-400 mt-1">Cote : {formatOdd(sel.bookmaker_odd)}</p>
+                      )}
                       {sel.value_edge != null && sel.value_edge > 0.05 && (
                         <span className="badge-high inline-block mt-2">
                           Value +{Math.round(sel.value_edge * 100)} pts
