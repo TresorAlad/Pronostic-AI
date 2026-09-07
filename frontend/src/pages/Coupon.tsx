@@ -12,7 +12,7 @@ interface CouponSelection {
 }
 
 export default function Coupon() {
-  const [minConfidence, setMinConfidence] = useState(0.65);
+  const [minConfidence, setMinConfidence] = useState(0.55);
   const [coupon, setCoupon] = useState<{
     id: string;
     selections: CouponSelection[];
@@ -24,11 +24,13 @@ export default function Coupon() {
     onSuccess: (data) => setCoupon(data as typeof coupon),
   });
 
+  const errorMessage = generate.error instanceof Error ? generate.error.message : null;
+
   return (
     <div className="max-w-2xl mx-auto">
       <h1 className="text-3xl font-bold mb-2">Coupon IA</h1>
       <p className="text-gray-400 mb-8">
-        Selection automatique basee sur la confiance du modele ML
+        Selection automatique sur les matchs Top 5 a venir, basee sur la confiance du modele ML
       </p>
 
       <div className="card mb-6">
@@ -49,15 +51,32 @@ export default function Coupon() {
           disabled={generate.isPending}
           className="btn-primary w-full mt-4"
         >
-          {generate.isPending ? 'Generation...' : 'Generer le coupon'}
+          {generate.isPending ? 'Generation en cours...' : 'Generer le coupon'}
         </button>
+        {generate.isPending && (
+          <p className="text-xs text-gray-500 mt-2 text-center">
+            Calcul des predictions ML sur les prochains matchs Top 5...
+          </p>
+        )}
       </div>
+
+      {errorMessage && (
+        <div className="card mb-6 border-red-900/50 bg-red-900/20">
+          <p className="text-red-300 text-sm">{errorMessage}</p>
+          <p className="text-xs text-gray-500 mt-2">
+            Verifiez que le backend (8082) et le service ML (5002) sont demarres.
+          </p>
+        </div>
+      )}
 
       {coupon && (
         <div className="card">
           <h3 className="text-lg font-semibold mb-4">Coupon genere</h3>
           {coupon.selections.length === 0 ? (
-            <p className="text-gray-400">Aucune selection ne depasse le seuil de confiance.</p>
+            <p className="text-gray-400">
+              Aucune selection ne depasse le seuil de confiance ({formatProbability(minConfidence)}).
+              Baissez le seuil ou attendez de nouveaux matchs Top 5.
+            </p>
           ) : (
             <ol className="space-y-4">
               {coupon.selections.map((sel, i) => (

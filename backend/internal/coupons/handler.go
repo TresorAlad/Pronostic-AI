@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prono/backend/internal/db"
@@ -34,7 +36,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.MinConfidence == 0 {
-		req.MinConfidence = 0.65
+		req.MinConfidence = 0.55
 	}
 	if req.MaxSelections == 0 {
 		req.MaxSelections = 5
@@ -43,7 +45,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		req.Name = "Coupon IA"
 	}
 
-	matches, err := h.store.GetUpcomingMatchesWithPredictions(r.Context(), 20)
+	matches, err := h.store.GetTop5UpcomingMatches(r.Context(), 15)
 	if err != nil {
 		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
 		return
@@ -58,27 +60,46 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		Confidence float64
 	}
 
-	var candidates []candidate
+	predictionsByMatch := make([]*db.Prediction, len(matches))
+	var wg sync.WaitGroup
+	for i, m := range matches {
+		wg.Add(1)
+		go func(idx int, matchID string) {
+			defer wg.Done()
+			pred, err := h.predictions.GetOrCreatePrediction(r.Context(), matchID)
+			if err == nil {
+				predictionsByMatch[idx] = pred
+			}
+		}(i, m.ID)
+	}
+	wg.Wait()
 
-	for _, m := range matches {
-		pred, err := h.predictions.RunLivePrediction(r.Context(), m.ID)
-		if err != nil {
-			continue
-		}
-		if pred.NoBetRecommended {
+	var candidates []candidate
+	for i, m := range matches {
+		pred := predictionsByMatch[i]
+		if pred == nil || pred.NoBetRecommended {
 			continue
 		}
 
 		var conf map[string]float64
 		json.Unmarshal(pred.Confidence, &conf)
 
+		bestMarket := ""
+		bestConf := 0.0
 		for market, confidence := range conf {
-			if confidence >= req.MinConfidence {
-				candidates = append(candidates, candidate{
-					MatchID: m.ID, HomeTeam: m.HomeTeam.Name, AwayTeam: m.AwayTeam.Name,
-					Market: market, Selection: market, Confidence: confidence,
-				})
+			if !isCouponMarket(market) {
+				continue
 			}
+			if confidence >= req.MinConfidence && confidence > bestConf {
+				bestMarket = market
+				bestConf = confidence
+			}
+		}
+		if bestMarket != "" {
+			candidates = append(candidates, candidate{
+				MatchID: m.ID, HomeTeam: m.HomeTeam.Name, AwayTeam: m.AwayTeam.Name,
+				Market: bestMarket, Selection: bestMarket, Confidence: bestConf,
+			})
 		}
 	}
 
@@ -108,6 +129,13 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		"id": couponID, "name": req.Name, "selections": selections,
 		"disclaimer": "Estimations statistiques, aucune garantie de gain.",
 	})
+}
+
+func isCouponMarket(market string) bool {
+	if strings.HasPrefix(market, "predicted_") || strings.HasPrefix(market, "double_chance_") {
+		return false
+	}
+	return true
 }
 
 func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {

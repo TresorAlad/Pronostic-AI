@@ -199,3 +199,20 @@ func (h *Handler) buildFeatures(ctx context.Context, match *db.Match) map[string
 func (h *Handler) RunLivePrediction(ctx context.Context, matchID string) (*db.Prediction, error) {
 	return h.runPrediction(ctx, matchID, false)
 }
+
+func (h *Handler) GetOrCreatePrediction(ctx context.Context, matchID string) (*db.Prediction, error) {
+	cacheKey := fmt.Sprintf("prediction:%s", matchID)
+	cached, err := h.redis.Get(ctx, cacheKey).Result()
+	if err == nil && cached != "" {
+		var pred db.Prediction
+		if json.Unmarshal([]byte(cached), &pred) == nil {
+			return &pred, nil
+		}
+	}
+
+	if pred, err := h.store.GetLatestPrediction(ctx, matchID); err == nil {
+		return pred, nil
+	}
+
+	return h.runPrediction(ctx, matchID, false)
+}

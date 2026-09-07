@@ -274,7 +274,20 @@ func (s *Store) GetLatestPrediction(ctx context.Context, matchID string) (*Predi
 }
 
 func (s *Store) GetUpcomingMatchesWithPredictions(ctx context.Context, limit int) ([]Match, error) {
-	rows, err := s.pool.Query(ctx, `
+	return s.getTop5UpcomingMatches(ctx, limit, true)
+}
+
+func (s *Store) GetTop5UpcomingMatches(ctx context.Context, limit int) ([]Match, error) {
+	return s.getTop5UpcomingMatches(ctx, limit, false)
+}
+
+func (s *Store) getTop5UpcomingMatches(ctx context.Context, limit int, includeLive bool) ([]Match, error) {
+	statusFilter := "m.status = 'scheduled'"
+	if includeLive {
+		statusFilter = "m.status IN ('scheduled', 'live')"
+	}
+
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT m.id, m.external_id, m.league_id, l.name,
 			ht.id, ht.external_id, ht.name, COALESCE(ht.logo_url,''),
 			at.id, at.external_id, at.name, COALESCE(at.logo_url,''),
@@ -284,9 +297,12 @@ func (s *Store) GetUpcomingMatchesWithPredictions(ctx context.Context, limit int
 		JOIN leagues l ON l.id = m.league_id
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
-		WHERE m.status IN ('scheduled', 'live')
-		ORDER BY m.kickoff_at LIMIT $1
-	`, limit)
+		WHERE l.external_id IN (39, 140, 135, 78, 61)
+		  AND %s
+		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '7 days'
+		ORDER BY m.kickoff_at
+		LIMIT $1
+	`, statusFilter), limit)
 	if err != nil {
 		return nil, err
 	}
