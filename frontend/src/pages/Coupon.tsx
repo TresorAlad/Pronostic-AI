@@ -1,15 +1,6 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { api, confidenceBadge, formatProbability } from '../api';
-
-interface CouponSelection {
-  match_id: string;
-  home_team: string;
-  away_team: string;
-  market: string;
-  selection: string;
-  confidence: number;
-}
+import { api, confidenceBadge, formatProbability, type CouponSelection } from '../api';
 
 export default function Coupon() {
   const [minConfidence, setMinConfidence] = useState(0.55);
@@ -21,7 +12,12 @@ export default function Coupon() {
 
   const generate = useMutation({
     mutationFn: () => api.generateCoupon(minConfidence, 5),
-    onSuccess: (data) => setCoupon(data as typeof coupon),
+    onSuccess: (data) =>
+      setCoupon({
+        id: data.id,
+        disclaimer: data.disclaimer ?? '',
+        selections: Array.isArray(data.selections) ? data.selections : [],
+      }),
   });
 
   const errorMessage = generate.error instanceof Error ? generate.error.message : null;
@@ -72,7 +68,7 @@ export default function Coupon() {
       {coupon && (
         <div className="card">
           <h3 className="text-lg font-semibold mb-4">Coupon genere</h3>
-          {coupon.selections.length === 0 ? (
+          {(coupon.selections?.length ?? 0) === 0 ? (
             <p className="text-gray-400">
               Aucune selection ne depasse le seuil de confiance ({formatProbability(minConfidence)}).
               Baissez le seuil ou attendez de nouveaux matchs Top 5.

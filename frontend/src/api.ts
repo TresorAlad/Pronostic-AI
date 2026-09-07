@@ -33,6 +33,15 @@ export interface Prediction {
   ai_abstain?: boolean;
 }
 
+export interface CouponSelection {
+  match_id: string;
+  home_team: string;
+  away_team: string;
+  market: string;
+  selection: string;
+  confidence: number;
+}
+
 export interface ModelPerformance {
   model_name: string;
   model_version: string;
@@ -75,10 +84,13 @@ export const api = {
   runEvaluation: () =>
     fetchAPI<{ evaluated: number; message: string }>('/evaluation/run', { method: 'POST' }),
   generateCoupon: (minConfidence = 0.65, maxSelections = 5) =>
-    fetchAPI<{ id: string; selections: unknown[]; disclaimer: string }>('/coupons/generate', {
-      method: 'POST',
-      body: JSON.stringify({ min_confidence: minConfidence, max_selections: maxSelections }),
-    }),
+    fetchAPI<{ id: string; selections: CouponSelection[] | null; disclaimer: string }>(
+      '/coupons/generate',
+      {
+        method: 'POST',
+        body: JSON.stringify({ min_confidence: minConfidence, max_selections: maxSelections }),
+      }
+    ),
   login: (email: string, password: string) =>
     fetchAPI<{ token: string }>('/auth/login', {
       method: 'POST',

@@ -111,7 +111,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		candidates = candidates[:req.MaxSelections]
 	}
 
-	var selections []db.CouponSelection
+	var selections = make([]db.CouponSelection, 0)
 	for _, c := range candidates {
 		selections = append(selections, db.CouponSelection{
 			MatchID: c.MatchID, HomeTeam: c.HomeTeam, AwayTeam: c.AwayTeam,
