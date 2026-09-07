@@ -36,6 +36,12 @@ export default function MatchDetail() {
     enabled: !!id,
   });
 
+  const { data: odds } = useQuery({
+    queryKey: ['match-odds', id],
+    queryFn: () => api.getMatchOdds(id!),
+    enabled: !!id,
+  });
+
   const analyze = useMutation({
     mutationFn: () => api.analyzeMatch(id!),
     onSuccess: () => refetch(),
@@ -106,6 +112,24 @@ export default function MatchDetail() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {odds && odds.length > 0 && (
+        <div className="card mb-6">
+          <h3 className="font-display text-lg font-semibold text-heading mb-4">Valeur vs cotes</h3>
+          <ul className="space-y-2 text-sm">
+            {odds.slice(0, 8).map((o, i) => (
+              <li key={i} className="flex flex-wrap justify-between gap-2 border-t border-slate-200 dark:border-navy-600 pt-2">
+                <span className="text-slate-600 dark:text-slate-300">
+                  {o.bookmaker} · {o.market} · {o.selection} @ {o.odd.toFixed(2)}
+                </span>
+                {o.value_edge != null && o.value_edge > 0.05 && (
+                  <span className="badge-high">Value +{Math.round(o.value_edge * 100)} pts</span>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

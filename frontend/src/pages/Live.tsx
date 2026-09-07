@@ -20,7 +20,7 @@ export default function Live() {
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="page-title">Matchs en direct</h1>
-          <p className="page-subtitle">Prédictions recalculées en temps réel via WebSocket</p>
+          <p className="page-subtitle">Prédictions recalculées en temps réel · modèle live si disponible</p>
         </div>
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 dark:border-navy-600 dark:bg-navy-850">
           <span
@@ -45,9 +45,16 @@ export default function Live() {
             <div key={match.id} className="card relative overflow-hidden">
               <div className="absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-red-500 to-red-600" />
               <div className="flex items-center justify-between mb-3 pl-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-red-400 animate-pulse">
-                  Live {match.minute ?? 0}&apos;
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-red-400 animate-pulse">
+                    Live {match.minute ?? 0}&apos;
+                  </span>
+                  {pred?.is_live || pred?.model_version?.startsWith('live') ? (
+                    <span className="text-xs font-semibold rounded-lg border border-brand/40 bg-brand/10 px-2 py-0.5 text-brand-dark dark:text-brand-light">
+                      Modèle live
+                    </span>
+                  ) : null}
+                </div>
                 <span className="text-xs text-slate-500">{match.league_name}</span>
               </div>
               <MatchTeams

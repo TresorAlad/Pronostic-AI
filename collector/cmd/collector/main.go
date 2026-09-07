@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "daemon", "Mode: daemon, backfill, sync-today, sync-live, sync-stats, sync-stats-all")
+	mode := flag.String("mode", "daemon", "Mode: daemon, backfill, sync-today, sync-live, sync-stats, sync-stats-all, sync-odds")
 	startYear := flag.Int("start-year", 2018, "Backfill start year")
 	statsLimit := flag.Int("limit", 500, "Max matches for sync-stats mode")
 	statsBatches := flag.Int("batches", 10, "Batches for sync-stats-all mode")
@@ -57,7 +57,8 @@ func main() {
 		}
 		log.Println("Backfill complete, syncing match details...")
 		svc.SyncMatchDetails(ctx, 500)
-		log.Println("Done. Lancez: make sync-neo4j pour alimenter le graphe Neo4j")
+		sync.TriggerNeo4jSync(ctx, cfg.AIAgentURL)
+		log.Println("Done. Graphe Neo4j synchronise si ai-agent disponible.")
 
 	case "sync-today":
 		if err := svc.SyncToday(ctx); err != nil {
@@ -92,6 +93,12 @@ func main() {
 		}
 		log.Printf("Match statistics synced (%d batches)", *statsBatches)
 
+	case "sync-odds":
+		if err := svc.SyncOdds(ctx, *statsLimit); err != nil {
+			log.Fatalf("Sync odds error: %v", err)
+		}
+		log.Printf("Odds synced (limit=%d)", *statsLimit)
+
 	default:
 		runDaemon(ctx, cfg, svc)
 	}
@@ -112,7 +119,7 @@ func runDaemon(ctx context.Context, cfg *config.Config, svc *sync.Service) {
 		for _, leagueID := range config.Top5LeagueIDs {
 			svc.SyncInjuries(ctx, leagueID, seasonYear)
 		}
-		svc.SyncMatchDetails(ctx, 100)
+		svc.SyncMatchDetails(ctx, 200)
 	}); err != nil {
 		log.Fatalf("Invalid sync cron spec %q: %v", syncSpec, err)
 	}

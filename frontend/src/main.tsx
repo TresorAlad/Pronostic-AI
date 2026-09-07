@@ -11,6 +11,7 @@ import MatchDetail from './pages/MatchDetail';
 import Performance from './pages/Performance';
 import Coupon from './pages/Coupon';
 import MyCoupons from './pages/MyCoupons';
+import MyPerformance from './pages/MyPerformance';
 import Account from './pages/Account';
 import Auth from './pages/Auth';
 import Live from './pages/Live';
@@ -35,6 +36,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="/performance" element={<Performance />} />
                 <Route path="/coupon" element={<Coupon />} />
                 <Route path="/my-coupons" element={<MyCoupons />} />
+                <Route path="/my-performance" element={<MyPerformance />} />
                 <Route path="/account" element={<Account />} />
                 <Route path="/auth" element={<Auth />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

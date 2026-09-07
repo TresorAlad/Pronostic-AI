@@ -134,16 +134,18 @@ func (h *Handler) runPrediction(ctx context.Context, matchID string, withAI bool
 	}
 
 	if withAI {
+		matchOdds, _ := h.store.GetMatchOdds(ctx, matchID)
 		aiPayload := map[string]interface{}{
-			"match_id":   matchID,
-			"home_team":  match.HomeTeam.Name,
-			"away_team":  match.AwayTeam.Name,
-			"home_team_id": match.HomeTeam.ID,
-			"away_team_id": match.AwayTeam.ID,
-			"predictions": mlResult.Predictions,
-			"confidence":  mlResult.Confidence,
-			"features":    features,
+			"match_id":           matchID,
+			"home_team":          match.HomeTeam.Name,
+			"away_team":          match.AwayTeam.Name,
+			"home_team_id":       match.HomeTeam.ID,
+			"away_team_id":       match.AwayTeam.ID,
+			"predictions":        mlResult.Predictions,
+			"confidence":         mlResult.Confidence,
+			"features":           features,
 			"no_bet_recommended": mlResult.NoBetRecommended,
+			"odds":               buildOddsForAI(matchOdds, mlResult.Predictions),
 		}
 		aiResult, err := h.aiClient.AnalyzeMatch(aiPayload)
 		if err == nil {

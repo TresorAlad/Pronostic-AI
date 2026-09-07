@@ -252,3 +252,42 @@ func (s *Store) GetLiveMatches(ctx context.Context) ([]MatchRef, error) {
 	}
 	return refs, rows.Err()
 }
+
+func (s *Store) GetUpcomingForOdds(ctx context.Context, limit int) ([]MatchRef, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.id, m.external_id
+		FROM matches m
+		JOIN leagues l ON l.id = m.league_id
+		WHERE l.external_id IN (39, 140, 135, 78, 61)
+		  AND m.status IN ('scheduled', 'live')
+		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '3 days'
+		ORDER BY m.kickoff_at
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var refs []MatchRef
+	for rows.Next() {
+		var ref MatchRef
+		if err := rows.Scan(&ref.ID, &ref.ExternalID); err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, rows.Err()
+}
+
+func (s *Store) UpsertMatchOdds(ctx context.Context, matchID, bookmaker, market, selection string, odd float64) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO match_odds (match_id, bookmaker, market, selection, odd, fetched_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (match_id, bookmaker, market, selection)
+		DO UPDATE SET odd = EXCLUDED.odd, fetched_at = NOW()
+	`, matchID, bookmaker, market, selection, odd)
+	return err
+}

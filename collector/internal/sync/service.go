@@ -381,6 +381,38 @@ func isTop5League(id int) bool {
 	return false
 }
 
+func (s *Service) SyncOdds(ctx context.Context, limit int) error {
+	matches, err := s.store.GetUpcomingForOdds(ctx, limit)
+	if err != nil {
+		return err
+	}
+	synced := 0
+	for _, m := range matches {
+		oddsResp, err := s.api.GetOdds(ctx, m.ExternalID)
+		if err != nil {
+			log.Printf("Odds fetch error fixture %d: %v", m.ExternalID, err)
+			continue
+		}
+		for _, block := range oddsResp {
+			for _, bm := range block.Bookmakers {
+				for _, bet := range bm.Bets {
+					for _, val := range bet.Values {
+						odd, err := strconv.ParseFloat(val.Odd, 64)
+						if err != nil || odd <= 1 {
+							continue
+						}
+						if err := s.store.UpsertMatchOdds(ctx, m.ID, bm.Name, bet.Name, val.Value, odd); err == nil {
+							synced++
+						}
+					}
+				}
+			}
+		}
+	}
+	log.Printf("Synced %d odds rows for %d matches", synced, len(matches))
+	return nil
+}
+
 func ptrInt(p *int) int {
 	if p == nil {
 		return 0

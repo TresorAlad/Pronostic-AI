@@ -106,6 +106,7 @@ type CouponSelection struct {
 	MarketCategory string  `json:"market_category,omitempty"`
 	MarketLabel    string  `json:"market_label,omitempty"`
 	Confidence     float64 `json:"confidence"`
+	ValueEdge      float64 `json:"value_edge,omitempty"`
 }
 
 type ModelPerformance struct {
@@ -803,8 +804,14 @@ func (s *Store) RefreshModelPerformance(ctx context.Context) error {
 			p.model_version,
 			po.market,
 			AVG(CASE WHEN po.is_correct THEN 1.0 ELSE 0.0 END),
-			NULL,
-			NULL,
+			AVG(
+				CASE WHEN po.actual_outcome THEN
+					-ln(GREATEST(po.predicted_probability::float8, 1e-15))
+				ELSE
+					-ln(GREATEST(1.0 - po.predicted_probability::float8, 1e-15))
+				END
+			),
+			AVG(POWER(po.predicted_probability::float8 - CASE WHEN po.actual_outcome THEN 1.0 ELSE 0.0 END, 2)),
 			COUNT(*)::int,
 			MIN(m.kickoff_at::date),
 			MAX(m.kickoff_at::date)
@@ -814,6 +821,43 @@ func (s *Store) RefreshModelPerformance(ctx context.Context) error {
 		GROUP BY p.model_version, po.market
 	`)
 	return err
+}
+
+type EvaluationOutcome struct {
+	PredictionID         string  `json:"prediction_id"`
+	Market               string  `json:"market"`
+	PredictedProbability float64 `json:"predicted_probability"`
+	ActualOutcome        bool    `json:"actual_outcome"`
+	IsCorrect            bool    `json:"is_correct"`
+	ModelVersion         string  `json:"model_version"`
+	EvaluatedAt          string  `json:"evaluated_at"`
+}
+
+func (s *Store) GetEvaluationOutcomes(ctx context.Context, limit int) ([]EvaluationOutcome, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT po.prediction_id::text, po.market, po.predicted_probability, po.actual_outcome,
+			po.is_correct, p.model_version, po.evaluated_at::text
+		FROM prediction_outcomes po
+		JOIN predictions p ON p.id = po.prediction_id
+		ORDER BY po.evaluated_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EvaluationOutcome
+	for rows.Next() {
+		var o EvaluationOutcome
+		if err := rows.Scan(&o.PredictionID, &o.Market, &o.PredictedProbability, &o.ActualOutcome, &o.IsCorrect, &o.ModelVersion, &o.EvaluatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetLiveMatches(ctx context.Context) ([]Match, error) {

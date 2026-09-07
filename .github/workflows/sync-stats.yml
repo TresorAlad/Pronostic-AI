@@ -1,0 +1,42 @@
+name: Sync Match Statistics
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      batches:
+        description: Number of batches
+        required: false
+        default: '10'
+      limit:
+        description: Matches per batch
+        required: false
+        default: '500'
+
+permissions:
+  contents: read
+
+jobs:
+  sync-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Sync stats batches
+        working-directory: collector
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: redis://localhost:6379/0
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$API_FOOTBALL_KEY" ]; then
+            echo "DATABASE_URL or API_FOOTBALL_KEY not configured, skipping"
+            exit 0
+          fi
+          BATCHES="${{ github.event.inputs.batches || '10' }}"
+          LIMIT="${{ github.event.inputs.limit || '500' }}"
+          go run ./cmd/collector -mode=sync-stats-all -batches="$BATCHES" -limit="$LIMIT" -pause=45

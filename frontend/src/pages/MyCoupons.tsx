@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { api, confidenceBadge, formatProbability } from '../api';
+import { api, confidenceBadge, formatProbability, type CouponSelection } from '../api';
 import { useAuth } from '../hooks/useAuth';
 import { marketLabel } from '../utils/marketLabels';
 
@@ -88,6 +88,28 @@ function CouponSummary({ coupon }: { coupon: SavedCoupon }) {
           <p className="text-xs text-slate-500 mt-1">{date}</p>
         </div>
         <span className="badge-medium">{coupon.selection_count} sélections</span>
+        <div className="flex gap-2">
+          <button type="button" className="btn-secondary text-xs py-1 px-2" onClick={() => api.downloadCoupon(coupon.id, 'json')}>
+            JSON
+          </button>
+          <button type="button" className="btn-secondary text-xs py-1 px-2" onClick={() => api.downloadCoupon(coupon.id, 'csv')}>
+            CSV
+          </button>
+          <button
+            type="button"
+            className="btn-secondary text-xs py-1 px-2"
+            onClick={() =>
+              detail &&
+              api.printCoupon({
+                id: coupon.id,
+                name: coupon.name,
+                selections: (detail?.selections as CouponSelection[]) ?? [],
+              })
+            }
+          >
+            PDF
+          </button>
+        </div>
       </div>
       {selections.length > 0 && (
         <ul className="space-y-2 text-sm">

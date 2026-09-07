@@ -92,7 +92,7 @@ export default function Account() {
       <div className="grid gap-4 sm:grid-cols-3 mb-6">
         <StatCard label="Coupons sauvegardés" value={String(couponCount)} />
         <StatCard label="Derniers coupons" value={String(recentCoupons.length)} hint="affichés ci-dessous" />
-        <StatCard label="Accès" value="Premium IA" hint="ML + analyse" />
+        <StatCard label="Performance" value="Voir stats" hint="sélections évaluées" link="/my-performance" />
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -121,6 +121,9 @@ export default function Account() {
             </Link>
             <Link to="/my-coupons" className="btn-secondary text-center">
               Voir tous mes coupons
+            </Link>
+            <Link to="/my-performance" className="btn-secondary text-center">
+              Ma performance
             </Link>
             <Link to="/dashboard" className="btn-secondary text-center">
               Matchs du jour
@@ -158,12 +161,20 @@ export default function Account() {
   );
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="card text-center">
+function StatCard({ label, value, hint, link }: { label: string; value: string; hint?: string; link?: string }) {
+  const inner = (
+    <>
       <p className="text-2xl font-display font-bold text-brand-dark dark:text-brand-light">{value}</p>
       <p className="mt-1 text-sm font-medium text-heading">{label}</p>
       {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
-    </div>
+    </>
   );
+  if (link) {
+    return (
+      <Link to={link} className="card text-center block hover:border-brand/30 transition-colors">
+        {inner}
+      </Link>
+    );
+  }
+  return <div className="card text-center">{inner}</div>;
 }

@@ -20,6 +20,8 @@ import (
 	"github.com/prono/backend/internal/evaluation"
 	"github.com/prono/backend/internal/matches"
 	pronomw "github.com/prono/backend/internal/middleware"
+	"github.com/prono/backend/internal/notifications"
+	"github.com/prono/backend/internal/performance"
 	"github.com/prono/backend/internal/predictions"
 	"github.com/prono/backend/internal/stats"
 	"github.com/prono/backend/internal/ws"
@@ -55,6 +57,8 @@ func main() {
 	couponHandler := coupons.NewHandler(store, predHandler)
 	evalHandler := evaluation.NewHandler(store)
 	statsHandler := stats.NewHandler(store)
+	notifHandler := notifications.NewHandler(store)
+	perfHandler := performance.NewHandler(store)
 
 	ws.ConfigureAllowedOrigins(cfg.CORSOrigins)
 	hub := ws.NewHub()
@@ -94,16 +98,21 @@ func main() {
 			r.With(pronomw.RateLimit(30)).Get("/{id}/prediction", predHandler.GetPrediction)
 			r.With(pronomw.RateLimit(10)).Post("/{id}/analyze", predHandler.AnalyzeMatch)
 		})
+		r.With(authSvc.RequireAuth).Get("/performance/mine", perfHandler.Mine)
+		r.With(authSvc.RequireAuth).Get("/notifications", notifHandler.List)
+		r.With(authSvc.RequireAuth).Patch("/notifications/{id}/read", notifHandler.MarkRead)
 		r.Route("/predictions", func(r chi.Router) {
 			r.Mount("/", predHandler.Routes())
 		})
 		r.Route("/coupons", func(r chi.Router) {
 			r.With(pronomw.RateLimit(5)).Post("/generate", couponHandler.Generate)
 			r.Get("/mine", couponHandler.ListMine)
+			r.Get("/mine/{id}/export", couponHandler.ExportMine)
 			r.Get("/mine/{id}", couponHandler.GetMineByID)
 			r.Get("/{id}", couponHandler.GetByID)
 		})
 		r.Post("/evaluation/run", evalHandler.RunEvaluation)
+		r.Get("/evaluation/outcomes", evalHandler.ListOutcomes)
 
 		r.Get("/ws/live", liveSvc.HandleWebSocket)
 	})

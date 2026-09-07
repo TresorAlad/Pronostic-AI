@@ -17,6 +17,7 @@ from models.model_1x2 import train_model as train_1x2, save as save_1x2
 from models.model_goals import train_models as train_goals, save as save_goals
 from models.model_corners import train_model as train_corners, save as save_corners
 from models.model_shots import train_models as train_shots, save as save_shots
+from models.versioning import prod_version, tag_artifact
 
 load_dotenv()
 
@@ -42,22 +43,26 @@ def main():
         # 1X2
         print("Training 1X2 model...")
         artifact_1x2 = train_1x2(train, val)
+        tag_artifact(artifact_1x2, prod_version("1x2"))
         save_1x2(artifact_1x2, os.path.join(MODELS_DIR, "model_1x2.joblib"))
         mlflow.log_param("model_1x2_features", len(artifact_1x2["feature_cols"]))
 
         # Goals
         print("Training Goals model...")
         artifact_goals = train_goals(train, val)
+        tag_artifact(artifact_goals, prod_version("goals"))
         save_goals(artifact_goals, os.path.join(MODELS_DIR, "model_goals.joblib"))
 
         # Corners
         print("Training Corners model...")
         artifact_corners = train_corners(train, val)
+        tag_artifact(artifact_corners, prod_version("corners"))
         save_corners(artifact_corners, os.path.join(MODELS_DIR, "model_corners.joblib"))
 
         # Shots
         print("Training Shots model...")
         artifact_shots = train_shots(train, val)
+        tag_artifact(artifact_shots, prod_version("shots"))
         save_shots(artifact_shots, os.path.join(MODELS_DIR, "model_shots.joblib"))
 
         mlflow.log_param("train_size", len(train))

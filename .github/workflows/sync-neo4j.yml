@@ -1,0 +1,33 @@
+name: Sync Neo4j
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-neo4j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Sync graph
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NEO4J_URI: ${{ secrets.NEO4J_URI }}
+          NEO4J_USER: ${{ secrets.NEO4J_USER }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+          AI_AGENT_URL: ${{ secrets.AI_AGENT_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL not configured, skipping"
+            exit 0
+          fi
+          pip install -r ml-pipeline/requirements.txt
+          pip install -r ai-agent/requirements.txt
+          python scripts/sync-neo4j.py

@@ -37,3 +37,22 @@ jobs:
         with:
           name: ml-models
           path: ml-service/models/*.joblib
+
+  deploy-models:
+    needs: retrain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ml-models
+          path: ml-service/models
+      - name: Reload ML service
+        env:
+          ML_SERVICE_URL: ${{ secrets.ML_SERVICE_URL }}
+        run: |
+          if [ -z "$ML_SERVICE_URL" ]; then
+            echo "ML_SERVICE_URL not configured, skipping reload"
+            exit 0
+          fi
+          curl -sf -X POST "${ML_SERVICE_URL%/}/models/reload"

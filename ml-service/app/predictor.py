@@ -10,6 +10,7 @@ import joblib
 
 MODELS_DIR = os.getenv("ML_MODELS_DIR", "./models")
 CONFIDENCE_THRESHOLD = float(os.getenv("ML_CONFIDENCE_THRESHOLD", "0.55"))
+APP_ENV = os.getenv("APP_ENV", "development")
 
 
 def _find_pipeline_path() -> str:
@@ -37,12 +38,17 @@ class ModelRegistry:
             "goals": "model_goals.joblib",
             "corners": "model_corners.joblib",
             "shots": "model_shots.joblib",
+            "live": "model_live.joblib",
         }
         for name, filename in model_files.items():
             path = os.path.join(MODELS_DIR, filename)
             if os.path.exists(path):
-                self.models[name] = joblib.load(path)
-                self.versions[name] = f"{name}-v1.0"
+                artifact = joblib.load(path)
+                version = str(artifact.get("model_version", f"{name}-v1.0"))
+                if APP_ENV == "production" and version.startswith("demo-"):
+                    continue
+                self.models[name] = artifact
+                self.versions[name] = version
 
     def reload(self):
         self.models.clear()
@@ -109,6 +115,16 @@ class ModelRegistry:
 
         if is_live:
             predictions = _adjust_live_predictions(predictions, features)
+            if "live" in self.models:
+                live_art = self.models["live"]
+                cols = live_art.get("feature_cols", [])
+                row = {c: features.get(c, 0) for c in cols}
+                import pandas as pd
+
+                prob = float(live_art["model"].predict_proba(pd.DataFrame([row]))[0][1])
+                predictions["over_2_5"] = prob
+                confidence["over_2_5"] = prob
+                self.versions["live"] = str(live_art.get("model_version", "live"))
 
         from app.market_estimates import enrich_derived_markets
 

@@ -1,0 +1,33 @@
+name: E2E Playwright
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+      - name: Install Playwright
+        working-directory: frontend
+        run: npx playwright install chromium --with-deps
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Run smoke e2e
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://127.0.0.1:4173
+        run: |
+          npx vite preview --host 127.0.0.1 --port 4173 &
+          sleep 3
+          npx playwright test

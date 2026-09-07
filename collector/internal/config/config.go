@@ -21,6 +21,7 @@ type Config struct {
 	LiveScope         string // top5 or all
 	LiveMaxFixtures   int
 	BackendURL        string
+	AIAgentURL        string
 }
 
 func Load() (*Config, error) {
@@ -70,6 +71,7 @@ func Load() (*Config, error) {
 		LiveScope:         liveScope,
 		LiveMaxFixtures:   liveMax,
 		BackendURL:        getEnv("BACKEND_URL", "http://localhost:8082"),
+		AIAgentURL:        getEnv("AI_AGENT_URL", "http://localhost:5001"),
 	}
 	return validate(cfg)
 }

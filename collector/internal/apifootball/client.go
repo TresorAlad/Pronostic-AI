@@ -235,6 +235,22 @@ func (c *Client) GetInjuries(ctx context.Context, leagueID, season int) ([]Injur
 	return resp.Response, nil
 }
 
+func (c *Client) GetOdds(ctx context.Context, fixtureID int) ([]OddsResponse, error) {
+	body, err := c.doRequest(ctx, "/odds", map[string]string{
+		"fixture": fmt.Sprintf("%d", fixtureID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Response []OddsResponse `json:"response"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Response, nil
+}
+
 // Response types
 
 type FixtureResponse struct {
@@ -351,4 +367,17 @@ type InjuryResponse struct {
 	} `json:"league"`
 	Type  string `json:"type"`
 	Reason string `json:"reason"`
+}
+
+type OddsResponse struct {
+	Bookmakers []struct {
+		Name string `json:"name"`
+		Bets []struct {
+			Name   string `json:"name"`
+			Values []struct {
+				Value string `json:"value"`
+				Odd   string `json:"odd"`
+			} `json:"values"`
+		} `json:"bets"`
+	} `json:"bookmakers"`
 }

@@ -97,7 +97,40 @@ export default function Coupon() {
 
       {coupon && (
         <div className="card">
-          <h3 className="font-display text-lg font-semibold text-heading mb-4">Coupon généré</h3>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h3 className="font-display text-lg font-semibold text-heading">Coupon généré</h3>
+            {coupon.selections.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-secondary text-xs py-1 px-2"
+                  onClick={() => api.downloadCoupon(coupon.id, 'json')}
+                >
+                  JSON
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs py-1 px-2"
+                  onClick={() => api.downloadCoupon(coupon.id, 'csv')}
+                >
+                  CSV
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs py-1 px-2"
+                  onClick={() =>
+                    api.printCoupon({
+                      id: coupon.id,
+                      selections: coupon.selections,
+                      disclaimer: coupon.disclaimer,
+                    })
+                  }
+                >
+                  PDF
+                </button>
+              </div>
+            )}
+          </div>
           {(coupon.selections?.length ?? 0) === 0 ? (
             <p className="text-slate-400">
               Aucune sélection ne dépasse le seuil ({formatProbability(minConfidence)}).
@@ -122,6 +155,11 @@ export default function Coupon() {
                         {category}
                       </span>
                       <p className="text-sm text-slate-300 mt-2">{label}</p>
+                      {sel.value_edge != null && sel.value_edge > 0.05 && (
+                        <span className="badge-high inline-block mt-2">
+                          Value +{Math.round(sel.value_edge * 100)} pts
+                        </span>
+                      )}
                     </div>
                     <span className={`${confidenceBadge(sel.confidence)} shrink-0`}>
                       {formatProbability(sel.confidence)}

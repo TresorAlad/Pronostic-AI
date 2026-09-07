@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     features: dict
     no_bet_recommended: bool
     context: dict
+    odds: list
     analysis: str
     reasons: list
     recommended_markets: list
@@ -62,6 +63,16 @@ def fetch_context(state: AgentState) -> AgentState:
             context["h2h_recent"] = h2h[:3]
         except Exception:
             context["h2h_matches"] = 0
+
+    odds = state.get("odds") or []
+    if odds:
+        context["bookmaker_odds"] = odds
+        value_rows = [
+            o for o in odds
+            if isinstance(o, dict) and float(o.get("value_edge") or 0) > 0.05
+        ]
+        if value_rows:
+            context["value_bets"] = value_rows[:5]
 
     state["context"] = context
     return state
@@ -220,6 +231,13 @@ def _rule_based_analyze(home, away, predictions, confidence, ctx) -> tuple[str, 
     if h2h_count > 0:
         parts.append(f"Historique direct (graphe) : {h2h_count} confrontations récentes en base.")
 
+    if ctx.get("value_bets"):
+        parts.append("Value bets détectés (probabilité ML > cote implicite) :")
+        for row in ctx["value_bets"][:3]:
+            ml_market = row.get("ml_market", row.get("market", ""))
+            edge = float(row.get("value_edge") or 0)
+            parts.append(f"- {ml_market} : edge +{edge:.0%}")
+
     home_win = predictions.get("home_win", 0)
     over_25 = predictions.get("over_2_5", 0)
     btts = predictions.get("btts", 0)
@@ -282,7 +300,8 @@ def _llm_analyze(home, away, predictions, confidence, ctx) -> tuple[str, list]:
 3. Couvre toutes les catégories disponibles : résultat (1X2), buts, tirs, corners, cartons, fautes, hors-jeu, possession.
 4. Si aucune probabilité ne dépasse 55 %, indique-le clairement sans inventer de picks.
 5. Réponds en français, de manière professionnelle.
-6. Fournis une analyse en 3-4 paragraphes structurés par thème et une liste de raisons."""
+6. Fournis une analyse en 3-4 paragraphes structurés par thème et une liste de raisons.
+7. Si des cotes bookmaker sont fournies, compare-les aux probabilités ML sans les modifier."""
 
     user_prompt = f"""Match: {home} vs {away}
 
@@ -292,7 +311,7 @@ Probabilités ML (NE PAS MODIFIER):
 Confiance:
 {json.dumps(confidence, indent=2)}
 
-Contexte (moyennes récentes):
+Contexte (moyennes récentes + H2H + cotes):
 {json.dumps(ctx, indent=2)}
 
 Produis:
@@ -348,6 +367,7 @@ def analyze(payload: dict) -> dict:
         "confidence": payload.get("confidence", {}),
         "features": payload.get("features", {}),
         "no_bet_recommended": payload.get("no_bet_recommended", False),
+        "odds": payload.get("odds", []),
         "context": {},
         "analysis": "",
         "reasons": [],

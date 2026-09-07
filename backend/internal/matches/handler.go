@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prono/backend/internal/db"
+	oddsutil "github.com/prono/backend/internal/odds"
 )
 
 type Handler struct {
@@ -22,6 +23,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/live", h.GetLive)
 	r.Get("/{id}", h.GetByID)
 	r.Get("/{id}/stats", h.GetStats)
+	r.Get("/{id}/odds", h.GetOdds)
 	return r
 }
 
@@ -70,6 +72,46 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 		stats = []db.MatchStats{}
 	}
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (h *Handler) GetOdds(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	odds, err := h.store.GetMatchOdds(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	if odds == nil {
+		odds = []db.MatchOdd{}
+	}
+	pred, _ := h.store.GetLatestPrediction(r.Context(), id)
+	type oddRow struct {
+		db.MatchOdd
+		ImpliedProbability float64 `json:"implied_probability,omitempty"`
+		MLProbability      float64 `json:"ml_probability,omitempty"`
+		ValueEdge          float64 `json:"value_edge,omitempty"`
+	}
+	var rows []oddRow
+	var preds map[string]float64
+	if pred != nil {
+		_ = json.Unmarshal(pred.Predictions, &preds)
+	}
+	for _, o := range odds {
+		row := oddRow{MatchOdd: o}
+		if o.Odd > 1 {
+			row.ImpliedProbability = 1 / o.Odd
+		}
+		if ml := oddsutil.MapToMLKey(o.Market, o.Selection); ml != "" {
+			if p, ok := preds[ml]; ok {
+				row.MLProbability = p
+				if row.ImpliedProbability > 0 {
+					row.ValueEdge = p - row.ImpliedProbability
+				}
+			}
+		}
+		rows = append(rows, row)
+	}
+	json.NewEncoder(w).Encode(rows)
 }
 
 func (h *Handler) ListLeagues(w http.ResponseWriter, r *http.Request) {

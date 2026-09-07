@@ -18,6 +18,9 @@ train:
 train-demo:
 	cd ml-pipeline && ML_MODELS_DIR=../ml-service/models /tmp/prono-ml-venv/bin/python train_demo.py
 
+train-live:
+	cd ml-pipeline && ML_MODELS_DIR=../ml-service/models /tmp/prono-ml-venv/bin/python train_live.py
+
 retrain:
 	./scripts/retrain.sh
 
@@ -50,6 +53,9 @@ evaluate:
 sync-neo4j:
 	/tmp/prono-ml-venv/bin/python scripts/sync-neo4j.py
 
+sync-odds:
+	cd collector && go run ./cmd/collector -mode=sync-odds -limit=30
+
 health:
 	./scripts/health-check.sh
 
@@ -58,7 +64,7 @@ test-go:
 	cd backend && go vet ./... && go test -race ./...
 
 test-python:
-	cd ml-pipeline && python -m pytest tests/ -q || true
+	cd ml-pipeline && python -m pytest tests/ -q
 	cd ml-service && python -c "from app.predictor import ModelRegistry"
 	cd ai-agent && python -c "from app.agent import analyze"
 

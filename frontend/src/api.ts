@@ -27,10 +27,11 @@ export interface Prediction {
   model_version: string;
   predictions: Record<string, number>;
   confidence: Record<string, number>;
-  no_bet_recommended: boolean;
+    no_bet_recommended: bool;
   ai_analysis?: string;
   ai_reasons?: string[];
   ai_abstain?: boolean;
+  is_live?: boolean;
 }
 
 export interface CouponSelection {
@@ -42,6 +43,7 @@ export interface CouponSelection {
   market_category?: string;
   market_label?: string;
   confidence: number;
+  value_edge?: number;
 }
 
 export interface ModelPerformance {
@@ -92,6 +94,36 @@ export interface PublicStats {
   match_statistics: number;
   predictions: number;
   outcomes: number;
+}
+
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  read_at?: string;
+  created_at: string;
+}
+
+export interface MatchOddRow {
+  bookmaker: string;
+  market: string;
+  selection: string;
+  odd: number;
+  implied_probability?: number;
+  ml_probability?: number;
+  value_edge?: number;
+}
+
+export interface UserPerformanceData {
+  summary: {
+    total_selections: number;
+    correct_count: number;
+    accuracy: number;
+    by_market: Record<string, number>;
+  };
+  trend: Array<{ period: string; accuracy: number; sample_size: number }>;
+  recent: Array<Record<string, unknown>>;
 }
 
 function parseRecord(value: unknown): Record<string, number> {
@@ -183,6 +215,52 @@ export const api = {
   getPublicStats: () => fetchAPI<PublicStats>('/stats/public'),
   prewarmPredictions: () =>
     fetchAPI<{ warmed: number }>('/predictions/prewarm', { method: 'POST' }),
+  getNotifications: () => fetchAPI<AppNotification[]>('/notifications'),
+  markNotificationRead: (id: string) =>
+    fetchAPI<void>(`/notifications/${id}/read`, { method: 'PATCH' }),
+  getMyPerformance: () => fetchAPI<UserPerformanceData>('/performance/mine'),
+  getMatchOdds: (id: string) => fetchAPI<MatchOddRow[]>(`/matches/${id}/odds`),
+  exportCouponUrl: (id: string, format: 'json' | 'csv' = 'json') => {
+    const base = API_URL.replace(/\/$/, '');
+    return `${base}/coupons/mine/${id}/export?format=${format}`;
+  },
+  downloadCoupon: async (id: string, format: 'json' | 'csv' = 'json') => {
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API_URL}/coupons/mine/${id}/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error('Export impossible');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `coupon-${id}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  printCoupon: (coupon: {
+    id: string;
+    name?: string;
+    selections: CouponSelection[];
+    disclaimer?: string;
+  }) => {
+    const lines = coupon.selections
+      .map(
+        (sel, i) =>
+          `<tr><td>${i + 1}</td><td>${sel.home_team} vs ${sel.away_team}</td><td>${sel.market_label ?? sel.selection}</td><td>${Math.round(sel.confidence * 100)}%</td></tr>`
+      )
+      .join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Coupon ${coupon.id}</title>
+      <style>body{font-family:sans-serif;padding:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px}</style>
+      </head><body><h1>Coupon IA</h1><table><thead><tr><th>#</th><th>Match</th><th>Sélection</th><th>Confiance</th></tr></thead><tbody>${lines}</tbody></table>
+      <p style="font-size:12px;color:#666;margin-top:16px">${coupon.disclaimer ?? ''}</p></body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+  },
 };
 
 export function confidenceBadge(confidence: number) {

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../api';
 import { useAuth, userInitials, userLabel } from '../hooks/useAuth';
 
 export default function UserMenu() {
@@ -7,6 +9,20 @@ export default function UserMenu() {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const { data: notifications } = useQuery({
+    queryKey: ['notifications'],
+    queryFn: api.getNotifications,
+    enabled: isAuthenticated,
+    refetchInterval: 60000,
+  });
+  const unread = notifications?.filter((n) => !n.read_at).length ?? 0;
+
+  const markRead = useMutation({
+    mutationFn: api.markNotificationRead,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+  });
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -48,6 +64,9 @@ export default function UserMenu() {
       >
         <span className="user-avatar">{initials}</span>
         <span className="user-menu-name hidden sm:inline">{label}</span>
+        {unread > 0 && (
+          <span className="rounded-full bg-red-500 text-white text-[10px] px-1.5 py-0.5">{unread}</span>
+        )}
         <span className="user-menu-dot" title="Connecté" />
       </button>
 
@@ -62,9 +81,31 @@ export default function UserMenu() {
             </div>
           </div>
 
+          {notifications && notifications.length > 0 && (
+            <div className="user-menu-links border-t border-slate-200 dark:border-navy-600 pt-2 mt-2">
+              <p className="text-xs font-semibold text-slate-500 px-2 mb-1">Notifications</p>
+              {notifications.slice(0, 3).map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  className="user-menu-link text-left w-full"
+                  onClick={() => {
+                    if (!n.read_at) markRead.mutate(n.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span className={n.read_at ? 'opacity-60' : ''}>{n.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="user-menu-links">
             <Link to="/account" className="user-menu-link" onClick={() => setOpen(false)}>
               Mon compte
+            </Link>
+            <Link to="/my-performance" className="user-menu-link" onClick={() => setOpen(false)}>
+              Ma performance
             </Link>
             <Link to="/my-coupons" className="user-menu-link" onClick={() => setOpen(false)}>
               Mes coupons
