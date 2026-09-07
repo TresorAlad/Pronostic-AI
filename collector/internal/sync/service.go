@@ -117,6 +117,7 @@ func (s *Service) SyncLive(ctx context.Context) error {
 			liveData := fmt.Sprintf(`{"minute":%d,"home_score":%v,"away_score":%v}`,
 				f.Fixture.Status.Elapsed, ptrInt(f.Goals.Home), ptrInt(f.Goals.Away))
 			s.redis.Set(ctx, liveKey, liveData, 5*time.Minute)
+			s.redis.Del(ctx, "prediction:"+matchID)
 		}
 
 		synced++
@@ -185,7 +186,10 @@ func (s *Service) processFixture(ctx context.Context, f apifootball.FixtureRespo
 		return err
 	}
 
-	kickoff, _ := time.Parse(time.RFC3339, f.Fixture.Date)
+	kickoff, err := time.Parse(time.RFC3339, f.Fixture.Date)
+	if err != nil {
+		return fmt.Errorf("invalid kickoff date for fixture %d: %w", f.Fixture.ID, err)
+	}
 	status := mapStatus(f.Fixture.Status.Short)
 	var minute *int
 	if f.Fixture.Status.Elapsed > 0 {
@@ -293,7 +297,7 @@ func mapEventType(eventType, detail string) string {
 	case "var":
 		return "var"
 	default:
-		return "goal"
+		return "unknown"
 	}
 }
 

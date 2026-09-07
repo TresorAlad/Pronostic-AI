@@ -38,7 +38,7 @@ export default function TeamLogo({ name, logoUrl, size = 'md', className = '' }:
 
   return (
     <span
-      className={`${sizes[size]} inline-flex items-center justify-center rounded-full bg-pitch-700 text-xs font-bold text-gray-300 ${className}`}
+      className={`${sizes[size]} inline-flex items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-600 dark:border-navy-600 dark:bg-navy-800 dark:text-slate-300 ${className}`}
       title={name}
     >
       {initials || '?'}

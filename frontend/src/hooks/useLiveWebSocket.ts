@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Match, Prediction } from '../api';
+import { normalizePrediction } from '../api';
 
 interface LiveEvent {
   type: string;
@@ -10,6 +11,34 @@ interface LiveEvent {
 function wsURL() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/api/v1/ws/live`;
+}
+
+function isTeamObject(value: unknown): value is Match['home_team'] {
+  return typeof value === 'object' && value !== null && 'name' in value;
+}
+
+function mergeMatchUpdate(existing: Match | undefined, data: Record<string, unknown>): Match {
+  const base = existing ?? ({} as Match);
+  const homeTeam = isTeamObject(data.home_team)
+    ? data.home_team
+    : typeof data.home_team === 'string' && base.home_team
+      ? { ...base.home_team, name: data.home_team }
+      : base.home_team;
+  const awayTeam = isTeamObject(data.away_team)
+    ? data.away_team
+    : typeof data.away_team === 'string' && base.away_team
+      ? { ...base.away_team, name: data.away_team }
+      : base.away_team;
+
+  return {
+    ...base,
+    ...data,
+    id: String(data.id ?? data.match_id ?? base.id ?? ''),
+    home_team: homeTeam ?? { name: 'Domicile' },
+    away_team: awayTeam ?? { name: 'Extérieur' },
+    league_name: String(data.league_name ?? base.league_name ?? ''),
+    status: String(data.status ?? base.status ?? 'live'),
+  } as Match;
 }
 
 export function useLiveWebSocket() {
@@ -36,21 +65,25 @@ export function useLiveWebSocket() {
         try {
           const msg: LiveEvent = JSON.parse(event.data);
           if (msg.type === 'match_update') {
-            const data = msg.data as Match & { match_id?: string };
+            const data = msg.data as Record<string, unknown>;
+            const id = String(data.match_id ?? data.id ?? '');
+            if (!id) return;
+
             setLiveMatches((prev) => {
-              const id = data.match_id || data.id;
               const idx = prev.findIndex((m) => m.id === id);
               if (idx >= 0) {
                 const updated = [...prev];
-                updated[idx] = { ...updated[idx], ...data };
+                updated[idx] = mergeMatchUpdate(updated[idx], data);
                 return updated;
               }
-              return [...prev, data as Match];
+              return [...prev, mergeMatchUpdate(undefined, data)];
             });
           }
           if (msg.type === 'prediction_update') {
-            const pred = msg.data as Prediction;
-            setPredictions((prev) => ({ ...prev, [pred.match_id]: pred }));
+            const pred = normalizePrediction(msg.data as Record<string, unknown>);
+            if (pred.match_id) {
+              setPredictions((prev) => ({ ...prev, [pred.match_id]: pred }));
+            }
           }
         } catch {
           // ignore malformed websocket payloads

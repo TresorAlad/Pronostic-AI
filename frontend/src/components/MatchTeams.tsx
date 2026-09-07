@@ -30,7 +30,7 @@ export default function MatchTeams({
     <div className="flex items-center justify-between gap-4">
       <div className={`flex flex-1 items-center gap-3 ${layout === 'card' ? 'flex-row-reverse justify-start' : 'flex-col'}`}>
         <TeamLogo name={home.name} logoUrl={home.logo_url} size={logoSize} />
-        <span className={`font-semibold ${layout === 'detail' ? 'text-2xl' : 'text-lg'} ${layout === 'card' ? 'text-right' : 'text-center'}`}>
+        <span className={`font-semibold text-heading ${layout === 'detail' ? 'text-2xl' : 'text-lg'} ${layout === 'card' ? 'text-right' : 'text-center'}`}>
           {home.name}
         </span>
       </div>
@@ -38,23 +38,23 @@ export default function MatchTeams({
       <div className="text-center px-2 shrink-0">
         {status === 'live' ? (
           <div>
-            <span className={`font-bold text-accent ${layout === 'detail' ? 'text-4xl' : 'text-2xl'}`}>
+            <span className={`font-bold text-brand-dark dark:text-brand-light ${layout === 'detail' ? 'text-4xl' : 'text-2xl'}`}>
               {homeScore ?? 0} - {awayScore ?? 0}
             </span>
             <p className="text-xs text-red-400 animate-pulse">{minute ?? 0}'</p>
           </div>
         ) : status === 'finished' ? (
-          <span className={`font-bold ${layout === 'detail' ? 'text-4xl text-accent' : 'text-xl'}`}>
+          <span className={`font-bold ${layout === 'detail' ? 'text-4xl text-brand-dark dark:text-brand-light' : 'text-xl text-heading'}`}>
             {homeScore} - {awayScore}
           </span>
         ) : (
-          <span className="text-gray-500 font-medium">VS</span>
+          <span className="text-slate-500 font-medium text-sm">VS</span>
         )}
       </div>
 
       <div className={`flex flex-1 items-center gap-3 ${layout === 'card' ? '' : 'flex-col'}`}>
         <TeamLogo name={away.name} logoUrl={away.logo_url} size={logoSize} />
-        <span className={`font-semibold ${layout === 'detail' ? 'text-2xl' : 'text-lg'} ${layout === 'card' ? '' : 'text-center'}`}>
+        <span className={`font-semibold text-heading ${layout === 'detail' ? 'text-2xl' : 'text-lg'} ${layout === 'card' ? '' : 'text-center'}`}>
           {away.name}
         </span>
       </div>

@@ -100,6 +100,59 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Service) Me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	user, err := s.store.GetUserByID(r.Context(), userID)
+	if err != nil {
+		http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+		return
+	}
+
+	couponCount, _ := s.store.CountCouponsByUser(r.Context(), userID)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"user":         user,
+		"coupon_count": couponCount,
+	})
+}
+
+func (s *Service) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+		return
+	}
+	if req.DisplayName == "" {
+		http.Error(w, `{"error":"display_name required"}`, http.StatusBadRequest)
+		return
+	}
+
+	user, err := s.store.UpdateUserDisplayName(r.Context(), userID, req.DisplayName)
+	if err != nil {
+		http.Error(w, `{"error":"update failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	couponCount, _ := s.store.CountCouponsByUser(r.Context(), userID)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"user":         user,
+		"coupon_count": couponCount,
+	})
+}
+
 func (s *Service) generateToken(userID, email string) (string, error) {
 	claims := Claims{
 		UserID: userID,
@@ -133,7 +186,26 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 			return
 		}
-		ctx := context.WithValue(r.Context(), "user_id", claims.UserID)
+		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+type contextKey string
+
+const userIDKey contextKey = "user_id"
+
+func UserIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(userIDKey).(string)
+	return id, ok && id != ""
+}
+
+func (s *Service) RequireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := UserIDFromContext(r.Context()); !ok {
+			http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }

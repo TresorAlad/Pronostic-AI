@@ -1,5 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  Legend,
+} from 'recharts';
 import { api, formatProbability } from '../api';
 
 export default function Performance() {
@@ -10,9 +21,17 @@ export default function Performance() {
     queryFn: api.getPerformance,
   });
 
+  const { data: trend } = useQuery({
+    queryKey: ['performance-trend'],
+    queryFn: api.getPerformanceTrend,
+  });
+
   const runEval = useMutation({
     mutationFn: api.runEvaluation,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['performance'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['performance'] });
+      queryClient.invalidateQueries({ queryKey: ['performance-trend'] });
+    },
   });
 
   const chartData = performance?.map((p) => ({
@@ -21,65 +40,118 @@ export default function Performance() {
     brier: p.brier_score ? Math.round(p.brier_score * 1000) / 1000 : 0,
   })) ?? [];
 
+  const trendByPeriod = (() => {
+    const map = new Map<string, Record<string, number | string>>();
+    for (const t of trend ?? []) {
+      const row = map.get(t.period) ?? { period: t.period };
+      row[t.market] = Math.round(t.accuracy * 100);
+      map.set(t.period, row);
+    }
+    return Array.from(map.values()).reverse();
+  })();
+
+  const trendMarkets = Array.from(new Set((trend ?? []).map((t) => t.market)));
+
   const errorMessage = isError && error instanceof Error ? error.message : null;
   const evalError = runEval.error instanceof Error ? runEval.error.message : null;
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-8 gap-4">
+      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold mb-2">Performance des modeles</h1>
-          <p className="text-gray-400">Metriques de validation ML et evaluation post-match</p>
+          <h1 className="page-title">Performance des modèles</h1>
+          <p className="page-subtitle">Métriques de validation ML et évaluation post-match</p>
         </div>
-        <button onClick={() => refetch()} className="btn-primary text-sm shrink-0">
-          Actualiser
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => refetch()} className="btn-secondary shrink-0 text-sm">
+            Actualiser
+          </button>
+          <button
+            onClick={() => runEval.mutate()}
+            disabled={runEval.isPending}
+            className="btn-primary shrink-0 text-sm"
+          >
+            {runEval.isPending ? 'Évaluation...' : 'Évaluer'}
+          </button>
+        </div>
       </div>
 
-      {isLoading && <p className="text-gray-400">Chargement...</p>}
+      {isLoading && <p className="text-slate-400">Chargement...</p>}
 
       {errorMessage && (
-        <div className="card mb-6 border-red-900/50 bg-red-900/20">
+        <div className="card mb-6 border-red-500/30 bg-red-500/5">
           <p className="text-red-300 text-sm">{errorMessage}</p>
         </div>
       )}
 
-      {!isLoading && (!performance || performance.length === 0) && (
-        <div className="card text-center py-12 mb-6">
-          <p className="text-gray-400">Aucune metrique disponible.</p>
-          <p className="text-sm text-gray-500 mt-2 mb-4">
-            Lancez l'entrainement ML pour generer les metriques de validation :
-          </p>
-          <code className="text-accent text-sm block mb-4">
-            cd ml-pipeline && python train.py
-          </code>
-          <button
-            onClick={() => runEval.mutate()}
-            disabled={runEval.isPending}
-            className="btn-primary text-sm"
-          >
-            {runEval.isPending ? 'Evaluation...' : 'Evaluer les predictions terminees'}
-          </button>
+      {evalError && (
+        <div className="card mb-6 border-red-500/30 bg-red-500/5">
+          <p className="text-red-300 text-sm">{evalError}</p>
         </div>
       )}
 
-      {evalError && (
-        <div className="card mb-6 border-red-900/50 bg-red-900/20">
-          <p className="text-red-300 text-sm">{evalError}</p>
+      {!isLoading && (!performance || performance.length === 0) && (
+        <div className="card mb-6 text-center py-12">
+          <p className="text-slate-400 mb-2">Aucune métrique disponible pour le moment.</p>
+          <p className="text-sm text-slate-500 max-w-md mx-auto">
+            Lancez l&apos;évaluation post-match pour comparer les prédictions aux résultats réels et
+            remplir les courbes de performance.
+          </p>
+          <button
+            onClick={() => runEval.mutate()}
+            disabled={runEval.isPending}
+            className="btn-primary mt-6 text-sm"
+          >
+            {runEval.isPending ? 'Évaluation en cours...' : 'Lancer l\'évaluation'}
+          </button>
+          <p className="text-xs text-slate-500 mt-4">
+            Ou en CLI :{' '}
+            <code className="text-brand-dark dark:text-brand-light">curl -X POST .../evaluation/run</code>
+          </p>
+        </div>
+      )}
+
+      {trendByPeriod.length > 0 && (
+        <div className="card mb-6">
+          <h3 className="font-display text-lg font-semibold text-heading mb-4">
+            Précision dans le temps (par semaine)
+          </h3>
+          <div className="w-full h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trendByPeriod}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                <XAxis dataKey="period" tick={{ fill: '#64748b', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#64748b' }} domain={[0, 100]} />
+                <Tooltip />
+                <Legend />
+                {trendMarkets.slice(0, 5).map((market, i) => (
+                  <Line
+                    key={market}
+                    type="monotone"
+                    dataKey={market}
+                    stroke={['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444'][i % 5]}
+                    dot={false}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
 
       {chartData.length > 0 && (
         <div className="card mb-6">
-          <h3 className="text-lg font-semibold mb-4">Accuracy par marche (validation)</h3>
+          <h3 className="font-display text-lg font-semibold text-heading mb-4">
+            Précision par marché (validation)
+          </h3>
           <div className="w-full h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1a3a1a" />
-                <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 11 }} angle={-20} />
-                <YAxis tick={{ fill: '#9ca3af' }} domain={[0, 100]} />
-                <Tooltip contentStyle={{ background: '#122812', border: '1px solid #1a3a1a' }} />
-                <Bar dataKey="accuracy" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} angle={-20} />
+                <YAxis tick={{ fill: '#64748b' }} domain={[0, 100]} />
+                <Tooltip />
+                <Bar dataKey="accuracy" fill="#10b981" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -87,29 +159,33 @@ export default function Performance() {
       )}
 
       {performance && performance.length > 0 && (
-        <div className="card">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-gray-400 border-b border-pitch-700">
-                <th className="text-left py-3">Modele</th>
-                <th className="text-left py-3">Marche</th>
-                <th className="text-right py-3">Accuracy</th>
-                <th className="text-right py-3">Log Loss</th>
-                <th className="text-right py-3">Brier</th>
-                <th className="text-right py-3">Echantillon</th>
+              <tr className="text-slate-400 border-b border-navy-600">
+                <th className="text-left py-3 font-medium">Modèle</th>
+                <th className="text-left py-3 font-medium">Marché</th>
+                <th className="text-right py-3 font-medium">Précision</th>
+                <th className="text-right py-3 font-medium">Log Loss</th>
+                <th className="text-right py-3 font-medium">Brier</th>
+                <th className="text-right py-3 font-medium">Échantillon</th>
               </tr>
             </thead>
             <tbody>
               {performance.map((p, i) => (
-                <tr key={i} className="border-b border-pitch-700/50">
-                  <td className="py-3">{p.model_name} {p.model_version}</td>
-                  <td className="py-3 capitalize">{p.market.replace(/_/g, ' ')}</td>
-                  <td className="text-right py-3">
+                <tr key={i} className="border-b border-navy-600/50 hover:bg-navy-800/40 transition-colors">
+                  <td className="py-3 text-slate-800 dark:text-slate-200">
+                    {p.model_name} {p.model_version}
+                  </td>
+                  <td className="py-3 capitalize text-slate-600 dark:text-slate-300">
+                    {p.market.replace(/_/g, ' ')}
+                  </td>
+                  <td className="text-right py-3 text-brand-dark dark:text-brand-light">
                     {p.accuracy != null ? formatProbability(p.accuracy) : '-'}
                   </td>
-                  <td className="text-right py-3">{p.log_loss?.toFixed(4) ?? '-'}</td>
-                  <td className="text-right py-3">{p.brier_score?.toFixed(4) ?? '-'}</td>
-                  <td className="text-right py-3">{p.sample_size ?? '-'}</td>
+                  <td className="text-right py-3 text-slate-400">{p.log_loss?.toFixed(4) ?? '-'}</td>
+                  <td className="text-right py-3 text-slate-400">{p.brier_score?.toFixed(4) ?? '-'}</td>
+                  <td className="text-right py-3 text-slate-400">{p.sample_size ?? '-'}</td>
                 </tr>
               ))}
             </tbody>

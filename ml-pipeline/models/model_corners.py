@@ -49,7 +49,7 @@ def predict(artifact: dict, features: dict) -> dict:
     prob = artifact["classifier"].predict_proba(X)[0]
     predicted_total = float(artifact["regressor"].predict(X)[0]) if hasattr(artifact["regressor"], "predict") else 0
     return {
-        f"over_corners_{artifact['threshold']}": float(prob[1]) if len(prob) > 1 else float(prob[0]),
+        "over_corners_9_5": float(prob[1]) if len(prob) > 1 else float(prob[0]),
         "predicted_total_corners": predicted_total,
     }
 

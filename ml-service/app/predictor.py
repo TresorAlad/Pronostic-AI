@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
 
 import joblib
 
 MODELS_DIR = os.getenv("ML_MODELS_DIR", "./models")
 CONFIDENCE_THRESHOLD = float(os.getenv("ML_CONFIDENCE_THRESHOLD", "0.55"))
+
+
+def _find_pipeline_path() -> str:
+    base_dir = os.path.dirname(__file__)
+    candidates = [
+        os.path.join(base_dir, "..", "ml-pipeline"),
+        os.path.join(base_dir, "..", "..", "ml-pipeline"),
+    ]
+    for path in candidates:
+        abs_path = os.path.abspath(path)
+        if os.path.isdir(abs_path):
+            return abs_path
+    return os.path.abspath(candidates[-1])
 
 
 class ModelRegistry:
@@ -36,51 +50,70 @@ class ModelRegistry:
         self._load_models()
 
     def predict_match(self, features: dict, is_live: bool = False) -> dict:
+        if features.get("data_source") != "database":
+            return {
+                "predictions": {},
+                "confidence": {},
+                "no_bet_recommended": True,
+                "model_version": "none",
+                "data_snapshot_at": datetime.now(timezone.utc).isoformat(),
+                "error": "features must come from database history",
+            }
+
+        if not self.models:
+            return {
+                "predictions": {},
+                "confidence": {},
+                "no_bet_recommended": True,
+                "model_version": "none",
+                "data_snapshot_at": datetime.now(timezone.utc).isoformat(),
+                "error": "no ML models loaded",
+            }
+
         predictions = {}
         confidence = {}
 
+        pipeline_path = _find_pipeline_path()
+        if pipeline_path not in sys.path:
+            sys.path.insert(0, pipeline_path)
+
         if "1x2" in self.models:
-            from sys import path as syspath
-            syspath.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "ml-pipeline"))
-            try:
-                from models.model_1x2 import predict as predict_1x2
-                preds = predict_1x2(self.models["1x2"], features)
-                predictions.update(preds)
-                for k, v in preds.items():
-                    if k.startswith(("home_win", "draw", "away_win")):
-                        confidence[k] = v
-            except ImportError:
-                predictions.update(_fallback_1x2(features))
+            from models.model_1x2 import predict as predict_1x2
+
+            preds = predict_1x2(self.models["1x2"], features)
+            predictions.update(preds)
+            for k, v in preds.items():
+                if k.startswith(("home_win", "draw", "away_win")):
+                    confidence[k] = v
 
         if "goals" in self.models:
-            try:
-                from models.model_goals import predict as predict_goals
-                preds = predict_goals(self.models["goals"], features)
-                predictions.update(preds)
-                confidence.update({k: v for k, v in preds.items()})
-            except ImportError:
-                pass
+            from models.model_goals import predict as predict_goals
+
+            preds = predict_goals(self.models["goals"], features)
+            predictions.update(preds)
+            confidence.update({k: v for k, v in preds.items()})
 
         if "corners" in self.models:
-            try:
-                from models.model_corners import predict as predict_corners
-                preds = predict_corners(self.models["corners"], features)
-                predictions.update(preds)
-                confidence.update({k: v for k, v in preds.items() if k.startswith("over_")})
-            except ImportError:
-                pass
+            from models.model_corners import predict as predict_corners
+
+            preds = predict_corners(self.models["corners"], features)
+            predictions.update(preds)
+            confidence.update({k: v for k, v in preds.items() if k.startswith("over_")})
 
         if "shots" in self.models:
-            try:
-                from models.model_shots import predict as predict_shots
-                preds = predict_shots(self.models["shots"], features)
-                predictions.update(preds)
-                confidence.update({k: v for k, v in preds.items()})
-            except ImportError:
-                pass
+            from models.model_shots import predict as predict_shots
+
+            preds = predict_shots(self.models["shots"], features)
+            predictions.update(preds)
+            confidence.update({k: v for k, v in preds.items()})
 
         if is_live:
             predictions = _adjust_live_predictions(predictions, features)
+
+        from app.market_estimates import enrich_derived_markets
+
+        predictions, derived_conf = enrich_derived_markets(predictions, features)
+        confidence.update(derived_conf)
 
         max_conf = max(confidence.values()) if confidence else 0
         no_bet = max_conf < CONFIDENCE_THRESHOLD
@@ -99,17 +132,6 @@ class ModelRegistry:
             "versions": self.versions,
             "confidence_threshold": CONFIDENCE_THRESHOLD,
         }
-
-
-def _fallback_1x2(features: dict) -> dict:
-    home_strength = features.get("home_attack_strength", 1.0) * features.get("home_form", 0.5)
-    away_strength = features.get("away_attack_strength", 1.0) * features.get("away_form", 0.5)
-    total = home_strength + away_strength + 0.3
-    return {
-        "home_win": home_strength / total,
-        "draw": 0.3 / total,
-        "away_win": away_strength / total,
-    }
 
 
 def _adjust_live_predictions(predictions: dict, features: dict) -> dict:

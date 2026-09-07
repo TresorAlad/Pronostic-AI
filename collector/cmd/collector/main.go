@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/prono/collector/internal/apifootball"
 	"github.com/prono/collector/internal/config"
@@ -17,8 +19,11 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "daemon", "Mode: daemon, backfill, sync-today, sync-live")
+	mode := flag.String("mode", "daemon", "Mode: daemon, backfill, sync-today, sync-live, sync-stats, sync-stats-all")
 	startYear := flag.Int("start-year", 2018, "Backfill start year")
+	statsLimit := flag.Int("limit", 500, "Max matches for sync-stats mode")
+	statsBatches := flag.Int("batches", 10, "Batches for sync-stats-all mode")
+	statsPause := flag.Int("pause", 45, "Pause seconds between sync-stats-all batches")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -52,19 +57,40 @@ func main() {
 		}
 		log.Println("Backfill complete, syncing match details...")
 		svc.SyncMatchDetails(ctx, 500)
-		log.Println("Done")
+		log.Println("Done. Lancez: make sync-neo4j pour alimenter le graphe Neo4j")
 
 	case "sync-today":
 		if err := svc.SyncToday(ctx); err != nil {
 			log.Fatalf("Sync today error: %v", err)
 		}
 		log.Println("Today's fixtures synced")
+		sync.TriggerPrewarm(ctx, cfg.BackendURL)
 
 	case "sync-live":
 		if err := svc.SyncLive(ctx); err != nil {
 			log.Fatalf("Sync live error: %v", err)
 		}
 		log.Println("Live fixtures synced")
+		sync.TriggerEvaluation(ctx, cfg.BackendURL)
+
+	case "sync-stats":
+		if err := svc.SyncMatchDetails(ctx, *statsLimit); err != nil {
+			log.Fatalf("Sync stats error: %v", err)
+		}
+		log.Printf("Match statistics synced (limit=%d)", *statsLimit)
+
+	case "sync-stats-all":
+		for i := 1; i <= *statsBatches; i++ {
+			log.Printf("Sync stats batch %d/%d (limit=%d)", i, *statsBatches, *statsLimit)
+			if err := svc.SyncMatchDetails(ctx, *statsLimit); err != nil {
+				log.Fatalf("Sync stats error: %v", err)
+			}
+			if i < *statsBatches {
+				log.Printf("Pause %ds (quota API)...", *statsPause)
+				time.Sleep(time.Duration(*statsPause) * time.Second)
+			}
+		}
+		log.Printf("Match statistics synced (%d batches)", *statsBatches)
 
 	default:
 		runDaemon(ctx, cfg, svc)
@@ -74,23 +100,33 @@ func main() {
 func runDaemon(ctx context.Context, cfg *config.Config, svc *sync.Service) {
 	c := cron.New()
 
-	c.AddFunc("@every 6h", func() {
+	syncSpec := fmt.Sprintf("@every %s", cfg.SyncInterval.String())
+	if _, err := c.AddFunc(syncSpec, func() {
 		log.Println("Running scheduled sync...")
 		if err := svc.SyncToday(ctx); err != nil {
 			log.Printf("Scheduled sync error: %v", err)
+		} else {
+			sync.TriggerPrewarm(ctx, cfg.BackendURL)
 		}
+		seasonYear := time.Now().Year()
 		for _, leagueID := range config.Top5LeagueIDs {
-			year := 2025
-			svc.SyncInjuries(ctx, leagueID, year)
+			svc.SyncInjuries(ctx, leagueID, seasonYear)
 		}
 		svc.SyncMatchDetails(ctx, 100)
-	})
+	}); err != nil {
+		log.Fatalf("Invalid sync cron spec %q: %v", syncSpec, err)
+	}
 
-	c.AddFunc("@every 1m", func() {
+	liveSpec := fmt.Sprintf("@every %s", cfg.LiveInterval.String())
+	if _, err := c.AddFunc(liveSpec, func() {
 		if err := svc.SyncLive(ctx); err != nil {
 			log.Printf("Live sync error: %v", err)
+		} else {
+			sync.TriggerEvaluation(ctx, cfg.BackendURL)
 		}
-	})
+	}); err != nil {
+		log.Fatalf("Invalid live cron spec %q: %v", liveSpec, err)
+	}
 
 	c.Start()
 	log.Println("Collector daemon started")

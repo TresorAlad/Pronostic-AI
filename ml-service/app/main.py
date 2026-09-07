@@ -2,6 +2,7 @@
 
 import os
 import sys
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -25,6 +26,12 @@ def health():
 
 @app.route("/models/status", methods=["GET"])
 def models_status():
+    return jsonify(registry.status())
+
+
+@app.route("/models/reload", methods=["POST"])
+def models_reload():
+    registry.reload()
     return jsonify(registry.status())
 
 
@@ -80,7 +87,7 @@ def evaluate_match():
     return jsonify({
         "prediction_id": prediction_id,
         "outcomes": results,
-        "evaluated_at": registry.predict_match({})["data_snapshot_at"],
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
     })
 
 

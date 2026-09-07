@@ -23,7 +23,8 @@ jobs:
       - name: Build Docker image
         uses: docker/build-push-action@v6
         with:
-          context: ./${{ matrix.service }}
+          context: ${{ matrix.service == 'ml-service' && '.' || format('./{0}', matrix.service) }}
+          file: ${{ matrix.service == 'ml-service' && 'ml-service/Dockerfile' || format('{0}/Dockerfile', matrix.service) }}
           push: false
           tags: prono-${{ matrix.service }}:ci
           load: true

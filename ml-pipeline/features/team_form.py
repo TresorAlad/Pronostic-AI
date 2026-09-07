@@ -87,6 +87,12 @@ def compute_team_form(
             result["has_xg"] = True
         else:
             result["has_xg"] = False
+        if "fouls" in team_stats.columns and team_stats["fouls"].notna().any():
+            result[f"{prefix}fouls_avg_{n_matches}"] = team_stats["fouls"].mean()
+        if "yellow_cards" in team_stats.columns and team_stats["yellow_cards"].notna().any():
+            result[f"{prefix}yellow_cards_avg_{n_matches}"] = team_stats["yellow_cards"].mean()
+        if "offsides" in team_stats.columns and team_stats["offsides"].notna().any():
+            result[f"{prefix}offsides_avg_{n_matches}"] = team_stats["offsides"].mean()
 
     return result
 

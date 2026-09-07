@@ -30,7 +30,6 @@ def train_models(train_df: pd.DataFrame, val_df: pd.DataFrame) -> dict:
             continue
         X_train = train_df[FEATURE_COLS].fillna(0)
         y_train = train_df[market]
-        X_val = val_df[FEATURE_COLS].fillna(0)
 
         base = lgb.LGBMClassifier(
             n_estimators=150, learning_rate=0.05, max_depth=5, random_state=42, verbose=-1

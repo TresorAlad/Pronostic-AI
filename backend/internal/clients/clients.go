@@ -22,13 +22,14 @@ func NewMLClient(baseURL string) *MLClient {
 }
 
 type MLPredictionResponse struct {
-	MatchID          string                 `json:"match_id"`
-	ModelVersion     string                 `json:"model_version"`
-	Predictions      map[string]float64     `json:"predictions"`
-	Confidence       map[string]float64     `json:"confidence"`
-	NoBetRecommended bool                   `json:"no_bet_recommended"`
-	DataSnapshotAt   string                 `json:"data_snapshot_at"`
-	IsLive           bool                   `json:"is_live"`
+	MatchID          string             `json:"match_id"`
+	ModelVersion     string             `json:"model_version"`
+	Predictions      map[string]float64 `json:"predictions"`
+	Confidence       map[string]float64 `json:"confidence"`
+	NoBetRecommended bool               `json:"no_bet_recommended"`
+	DataSnapshotAt   string             `json:"data_snapshot_at"`
+	IsLive           bool               `json:"is_live"`
+	Error            string             `json:"error,omitempty"`
 }
 
 func (c *MLClient) PredictMatch(matchID string, features map[string]interface{}, live bool) (*MLPredictionResponse, error) {
@@ -59,6 +60,9 @@ func (c *MLClient) PredictMatch(matchID string, features map[string]interface{},
 	var result MLPredictionResponse
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
+	}
+	if result.Error != "" {
+		return nil, fmt.Errorf("ml service: %s", result.Error)
 	}
 	return &result, nil
 }

@@ -1,49 +1,67 @@
 import { Link, useLocation } from 'react-router-dom';
+import Logo from './Logo';
+import ThemeToggle from './ThemeToggle';
+import HealthWidget from './HealthWidget';
+import UserMenu from './UserMenu';
 
 const navItems = [
-  { path: '/', label: 'Dashboard' },
+  { path: '/dashboard', label: 'Matchs' },
   { path: '/live', label: 'Live' },
   { path: '/performance', label: 'Performance' },
   { path: '/coupon', label: 'Coupon IA' },
+  { path: '/my-coupons', label: 'Mes coupons' },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const isLanding = location.pathname === '/';
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-pitch-700 bg-pitch-800/80 backdrop-blur sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2">
-            <span className="text-2xl">&#9917;</span>
-            <span className="font-bold text-lg">Football AI Predictor</span>
+    <div className="min-h-screen flex flex-col">
+      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/80 backdrop-blur-xl dark:border-navy-600/60 dark:bg-navy-900/75">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 md:py-4">
+          <Link to="/" className="shrink-0 transition-opacity hover:opacity-90">
+            <Logo size="md" />
           </Link>
-          <nav className="flex items-center gap-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  location.pathname === item.path
-                    ? 'bg-accent/20 text-accent'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
-            <Link
-              to="/auth"
-              className="ml-2 px-3 py-2 text-sm text-gray-400 hover:text-white"
-            >
-              Compte
-            </Link>
-          </nav>
+          <div className="flex items-center gap-2">
+            <nav className="flex items-center gap-1 overflow-x-auto">
+              {navItems.map((item) => {
+                const active = location.pathname === item.path;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={`nav-link whitespace-nowrap ${active ? 'nav-link-active' : ''}`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
+            <ThemeToggle />
+            <HealthWidget />
+            <UserMenu />
+          </div>
         </div>
       </header>
-      <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
-      <footer className="border-t border-pitch-700 py-4 text-center text-xs text-gray-500">
-        Estimations statistiques - Aucune garantie de gain - Donnees API-Football
+
+      <main
+        className={
+          isLanding
+            ? 'mx-auto w-full flex-1'
+            : 'mx-auto w-full max-w-6xl flex-1 px-4 py-8 md:py-10'
+        }
+      >
+        {children}
+      </main>
+
+      <footer className="mt-auto border-t border-slate-200 bg-white/80 py-6 dark:border-navy-600/60 dark:bg-navy-950/80">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 text-center">
+          <Logo size="sm" showText={false} />
+          <p className="text-xs text-slate-500">
+            Estimations statistiques · Aucune garantie de gain · Données API-Football
+          </p>
+        </div>
       </footer>
     </div>
   );

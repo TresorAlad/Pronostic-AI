@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/prono/backend/internal/auth"
 	"github.com/prono/backend/internal/clients"
@@ -19,7 +19,9 @@ import (
 	"github.com/prono/backend/internal/db"
 	"github.com/prono/backend/internal/evaluation"
 	"github.com/prono/backend/internal/matches"
+	pronomw "github.com/prono/backend/internal/middleware"
 	"github.com/prono/backend/internal/predictions"
+	"github.com/prono/backend/internal/stats"
 	"github.com/prono/backend/internal/ws"
 	"github.com/redis/go-redis/v9"
 )
@@ -42,6 +44,7 @@ func main() {
 		log.Fatalf("Redis parse error: %v", err)
 	}
 	redisClient := redis.NewClient(opt)
+	defer redisClient.Close()
 
 	mlClient := clients.NewMLClient(cfg.MLServiceURL)
 	aiClient := clients.NewAIAgentClient(cfg.AIAgentURL)
@@ -51,7 +54,9 @@ func main() {
 	predHandler := predictions.NewHandler(store, mlClient, aiClient, redisClient)
 	couponHandler := coupons.NewHandler(store, predHandler)
 	evalHandler := evaluation.NewHandler(store)
+	statsHandler := stats.NewHandler(store)
 
+	ws.ConfigureAllowedOrigins(cfg.CORSOrigins)
 	hub := ws.NewHub()
 	go hub.Run()
 
@@ -59,11 +64,11 @@ func main() {
 	go liveSvc.StartPolling(ctx, 30*time.Second)
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 	}))
@@ -78,17 +83,26 @@ func main() {
 
 		r.Post("/auth/register", authSvc.Register)
 		r.Post("/auth/login", authSvc.Login)
+		r.With(authSvc.RequireAuth).Get("/auth/me", authSvc.Me)
+		r.With(authSvc.RequireAuth).Patch("/auth/me", authSvc.UpdateMe)
+
+		r.Get("/stats/public", statsHandler.Public)
 
 		r.Get("/leagues", matchHandler.ListLeagues)
 		r.Route("/matches", func(r chi.Router) {
 			r.Mount("/", matchHandler.Routes())
-			r.Get("/{id}/prediction", predHandler.GetPrediction)
-			r.Post("/{id}/analyze", predHandler.AnalyzeMatch)
+			r.With(pronomw.RateLimit(30)).Get("/{id}/prediction", predHandler.GetPrediction)
+			r.With(pronomw.RateLimit(10)).Post("/{id}/analyze", predHandler.AnalyzeMatch)
 		})
 		r.Route("/predictions", func(r chi.Router) {
-			r.Get("/performance", predHandler.GetPerformance)
+			r.Mount("/", predHandler.Routes())
 		})
-		r.Mount("/coupons", couponHandler.Routes())
+		r.Route("/coupons", func(r chi.Router) {
+			r.With(pronomw.RateLimit(5)).Post("/generate", couponHandler.Generate)
+			r.Get("/mine", couponHandler.ListMine)
+			r.Get("/mine/{id}", couponHandler.GetMineByID)
+			r.Get("/{id}", couponHandler.GetByID)
+		})
 		r.Post("/evaluation/run", evalHandler.RunEvaluation)
 
 		r.Get("/ws/live", liveSvc.HandleWebSocket)

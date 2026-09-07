@@ -7,7 +7,6 @@ import os
 
 import joblib
 import lightgbm as lgb
-import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.preprocessing import LabelEncoder
@@ -36,7 +35,7 @@ def train_model(train_df: pd.DataFrame, val_df: pd.DataFrame) -> dict:
 
     le = LabelEncoder()
     y_train = le.fit_transform(train_df["result"])
-    y_val = le.transform(val_df["result"])
+    _ = le.transform(val_df["result"])
 
     X_train = train_df[FEATURE_COLS].fillna(0)
     X_val = val_df[FEATURE_COLS].fillna(0)

@@ -18,9 +18,9 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div className="max-w-lg mx-auto mt-16 card border-red-900/50">
-          <h1 className="text-xl font-bold text-red-300 mb-2">Erreur interface</h1>
-          <p className="text-sm text-gray-400 mb-4">{this.state.error.message}</p>
+        <div className="max-w-lg mx-auto mt-16 card border-red-500/30 bg-red-500/5">
+          <h1 className="font-display text-xl font-bold text-red-300 mb-2">Erreur interface</h1>
+          <p className="text-sm text-slate-400 mb-5">{this.state.error.message}</p>
           <button
             type="button"
             onClick={() => window.location.reload()}

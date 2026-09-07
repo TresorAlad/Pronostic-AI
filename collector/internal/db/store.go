@@ -69,7 +69,7 @@ func (s *Store) UpsertSeason(ctx context.Context, leagueID string, year int) (st
 		VALUES ($1, $2, $3)
 		ON CONFLICT (league_id, year) DO UPDATE SET is_current = EXCLUDED.is_current
 		RETURNING id
-	`, leagueID, year, year >= 2025).Scan(&id)
+	`, leagueID, year, year >= time.Now().Year()).Scan(&id)
 	return id, err
 }
 
@@ -189,7 +189,10 @@ func (s *Store) UpsertInjury(ctx context.Context, playerID, teamID, reason, inju
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO injuries (player_id, team_id, reason, type, is_active)
 		VALUES ($1, $2, $3, $4, true)
-		ON CONFLICT DO NOTHING
+		ON CONFLICT (player_id, team_id, type) DO UPDATE SET
+			reason = EXCLUDED.reason,
+			is_active = true,
+			updated_at = NOW()
 	`, playerID, teamID, reason, injuryType)
 	return err
 }

@@ -1,0 +1,52 @@
+name: CI Python Dataset Smoke
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['ml-pipeline/**', 'infra/postgres/**', '.github/workflows/ci-python-dataset.yml']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-dataset-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: prono
+          POSTGRES_PASSWORD: prono_secret
+          POSTGRES_DB: prono
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prono"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ml-pipeline/requirements.txt
+      - name: Apply schema
+        env:
+          PGPASSWORD: prono_secret
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y postgresql-client
+          psql -h localhost -U prono -d prono -f infra/postgres/migrations/001_initial_schema.sql
+          psql -h localhost -U prono -d prono -f infra/postgres/migrations/002_injuries_unique.sql
+      - name: Smoke build_dataset on empty DB
+        working-directory: ml-pipeline
+        env:
+          DATABASE_URL: postgresql://prono:prono_secret@localhost:5432/prono
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -c "from datasets.builder import build_dataset; df = build_dataset(); print('rows', len(df))"

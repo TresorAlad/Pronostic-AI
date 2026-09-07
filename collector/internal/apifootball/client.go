@@ -36,6 +36,33 @@ func NewClient(baseURL, host, apiKey, authMode string) *Client {
 }
 
 func (c *Client) doRequest(ctx context.Context, path string, params map[string]string) ([]byte, error) {
+	const maxRetries = 4
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt*attempt) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		body, status, err := c.doRequestOnce(ctx, path, params)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		if status != http.StatusTooManyRequests {
+			return nil, err
+		}
+	}
+
+	return nil, fmt.Errorf("rate limited after retries: %w", lastErr)
+}
+
+func (c *Client) doRequestOnce(ctx context.Context, path string, params map[string]string) ([]byte, int, error) {
 	elapsed := time.Since(c.lastCall)
 	if elapsed < c.minDelay {
 		time.Sleep(c.minDelay - elapsed)
@@ -44,7 +71,7 @@ func (c *Client) doRequest(ctx context.Context, path string, params map[string]s
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if c.authMode == "rapidapi" {
@@ -62,20 +89,24 @@ func (c *Client) doRequest(ctx context.Context, path string, params map[string]s
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, resp.StatusCode, err
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, resp.StatusCode, fmt.Errorf("API error 429: %s", string(body))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		return nil, resp.StatusCode, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
 	}
 
-	return body, nil
+	return body, resp.StatusCode, nil
 }
 
 type APIResponse struct {

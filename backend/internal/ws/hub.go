@@ -18,6 +18,22 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+func ConfigureAllowedOrigins(origins []string) {
+	allowed := append([]string(nil), origins...)
+	upgrader.CheckOrigin = func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		for _, o := range allowed {
+			if o == origin {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 type Hub struct {
 	clients    map[*Client]bool
 	broadcast  chan []byte
@@ -56,7 +72,7 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 		case message := <-h.broadcast:
-			h.mu.RLock()
+			h.mu.Lock()
 			for client := range h.clients {
 				select {
 				case client.send <- message:
@@ -65,7 +81,7 @@ func (h *Hub) Run() {
 					delete(h.clients, client)
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
@@ -150,12 +166,23 @@ func (ls *LiveService) pollLiveMatches(ctx context.Context) {
 			ls.hub.BroadcastEvent("match_update", json.RawMessage(liveData))
 		} else {
 			data, _ := json.Marshal(map[string]interface{}{
-				"match_id":   match.ID,
-				"minute":     match.Minute,
-				"home_score": match.HomeScore,
-				"away_score": match.AwayScore,
-				"home_team":  match.HomeTeam.Name,
-				"away_team":  match.AwayTeam.Name,
+				"id":          match.ID,
+				"match_id":    match.ID,
+				"league_name": match.LeagueName,
+				"minute":      match.Minute,
+				"home_score":  match.HomeScore,
+				"away_score":  match.AwayScore,
+				"status":      match.Status,
+				"home_team": map[string]interface{}{
+					"id":       match.HomeTeam.ID,
+					"name":     match.HomeTeam.Name,
+					"logo_url": match.HomeTeam.LogoURL,
+				},
+				"away_team": map[string]interface{}{
+					"id":       match.AwayTeam.ID,
+					"name":     match.AwayTeam.Name,
+					"logo_url": match.AwayTeam.LogoURL,
+				},
 			})
 			ls.hub.BroadcastEvent("match_update", json.RawMessage(data))
 		}

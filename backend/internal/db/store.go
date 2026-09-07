@@ -3,9 +3,11 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -69,13 +71,15 @@ type MatchStats struct {
 	ExpectedGoals  *float64 `json:"expected_goals"`
 	Fouls          *int     `json:"fouls"`
 	YellowCards    *int     `json:"yellow_cards"`
+	Offsides       *int     `json:"offsides"`
 }
 
 type User struct {
-	ID           string `json:"id"`
-	Email        string `json:"email"`
-	DisplayName  string `json:"display_name"`
-	PasswordHash string `json:"-"`
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"display_name"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type Prediction struct {
@@ -94,12 +98,14 @@ type Prediction struct {
 }
 
 type CouponSelection struct {
-	MatchID    string  `json:"match_id"`
-	HomeTeam   string  `json:"home_team"`
-	AwayTeam   string  `json:"away_team"`
-	Market     string  `json:"market"`
-	Selection  string  `json:"selection"`
-	Confidence float64 `json:"confidence"`
+	MatchID        string  `json:"match_id"`
+	HomeTeam       string  `json:"home_team"`
+	AwayTeam       string  `json:"away_team"`
+	Market         string  `json:"market"`
+	Selection      string  `json:"selection"`
+	MarketCategory string  `json:"market_category,omitempty"`
+	MarketLabel    string  `json:"market_label,omitempty"`
+	Confidence     float64 `json:"confidence"`
 }
 
 type ModelPerformance struct {
@@ -141,13 +147,18 @@ func (s *Store) GetMatchesToday(ctx context.Context) ([]Match, error) {
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
 		WHERE l.external_id IN (39, 140, 135, 78, 61)
-		  AND m.status != 'live'
 		  AND (
-		    m.kickoff_at::date = CURRENT_DATE
-		    OR (m.status = 'scheduled' AND m.kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '7 days')
+		    m.status = 'live'
+		    OR (
+		      m.status != 'live'
+		      AND (
+		        m.kickoff_at::date = CURRENT_DATE
+		        OR (m.status = 'scheduled' AND m.kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '7 days')
+		      )
+		    )
 		  )
 		ORDER BY
-			CASE m.status WHEN 'scheduled' THEN 0 ELSE 1 END,
+			CASE m.status WHEN 'live' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END,
 			m.kickoff_at
 		LIMIT 50
 	`)
@@ -207,7 +218,7 @@ func (s *Store) GetMatchByID(ctx context.Context, id string) (*Match, error) {
 func (s *Store) GetMatchStats(ctx context.Context, matchID string) ([]MatchStats, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT ms.team_id, t.name, ms.total_shots, ms.shots_on_goal,
-			ms.corner_kicks, ms.ball_possession, ms.expected_goals, ms.fouls, ms.yellow_cards
+			ms.corner_kicks, ms.ball_possession, ms.expected_goals, ms.fouls, ms.yellow_cards, ms.offsides
 		FROM match_statistics ms
 		JOIN teams t ON t.id = ms.team_id
 		WHERE ms.match_id = $1
@@ -220,7 +231,7 @@ func (s *Store) GetMatchStats(ctx context.Context, matchID string) ([]MatchStats
 	for rows.Next() {
 		var st MatchStats
 		if err := rows.Scan(&st.TeamID, &st.TeamName, &st.TotalShots, &st.ShotsOnGoal,
-			&st.CornerKicks, &st.BallPossession, &st.ExpectedGoals, &st.Fouls, &st.YellowCards); err != nil {
+			&st.CornerKicks, &st.BallPossession, &st.ExpectedGoals, &st.Fouls, &st.YellowCards, &st.Offsides); err != nil {
 			return nil, err
 		}
 		stats = append(stats, st)
@@ -228,24 +239,245 @@ func (s *Store) GetMatchStats(ctx context.Context, matchID string) ([]MatchStats
 	return stats, rows.Err()
 }
 
+type TeamStatsAverages struct {
+	MatchCount        int
+	StatsMatchCount   int
+	ShotsAvg          float64
+	ShotsOnTargetAvg  float64
+	CornersAvg        float64
+	PossessionAvg     float64
+	XGAvg             float64
+	FoulsAvg          float64
+	YellowCardsAvg    float64
+	OffsidesAvg       float64
+	GoalsAvg          float64
+	GoalsConcededAvg  float64
+	Form              float64
+}
+
+func (s *Store) GetTeamRecentStatsAverages(ctx context.Context, teamID string, before time.Time, limit int) (*TeamStatsAverages, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	row := s.pool.QueryRow(ctx, `
+		WITH recent AS (
+			SELECT m.id, m.home_team_id, m.away_team_id, m.home_score, m.away_score
+			FROM matches m
+			WHERE m.status = 'finished'
+			  AND m.kickoff_at < $2
+			  AND (m.home_team_id = $1 OR m.away_team_id = $1)
+			ORDER BY m.kickoff_at DESC
+			LIMIT $3
+		)
+		SELECT
+			COUNT(*)::int,
+			COUNT(ms.id)::int,
+			COALESCE(AVG(ms.total_shots) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(ms.shots_on_goal) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(ms.corner_kicks) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(ms.ball_possession) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(ms.expected_goals) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(ms.fouls) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(ms.yellow_cards) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(ms.offsides) FILTER (WHERE ms.id IS NOT NULL), 0),
+			COALESCE(AVG(
+				CASE WHEN r.home_team_id = $1 THEN r.home_score::float ELSE r.away_score::float END
+			), 0),
+			COALESCE(AVG(
+				CASE WHEN r.home_team_id = $1 THEN r.away_score::float ELSE r.home_score::float END
+			), 0),
+			COALESCE(
+				AVG(
+					CASE
+						WHEN r.home_team_id = $1 AND r.home_score > r.away_score THEN 3.0
+						WHEN r.away_team_id = $1 AND r.away_score > r.home_score THEN 3.0
+						WHEN r.home_score = r.away_score THEN 1.0
+						ELSE 0.0
+					END
+				) / 3.0,
+				0
+			)
+		FROM recent r
+		LEFT JOIN match_statistics ms ON ms.match_id = r.id AND ms.team_id = $1
+	`, teamID, before, limit)
+
+	var avg TeamStatsAverages
+	if err := row.Scan(
+		&avg.MatchCount, &avg.StatsMatchCount,
+		&avg.ShotsAvg, &avg.ShotsOnTargetAvg, &avg.CornersAvg, &avg.PossessionAvg, &avg.XGAvg,
+		&avg.FoulsAvg, &avg.YellowCardsAvg, &avg.OffsidesAvg,
+		&avg.GoalsAvg, &avg.GoalsConcededAvg, &avg.Form,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if avg.MatchCount == 0 {
+		return nil, nil
+	}
+
+	return &avg, nil
+}
+
+func (s *Store) GetTeamVenueForm(ctx context.Context, teamID string, venue string, before time.Time, limit int) (float64, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	var venueFilter string
+	switch venue {
+	case "home":
+		venueFilter = "AND m.home_team_id = $1"
+	case "away":
+		venueFilter = "AND m.away_team_id = $1"
+	default:
+		return 0, fmt.Errorf("invalid venue: %s", venue)
+	}
+
+	query := fmt.Sprintf(`
+		WITH recent AS (
+			SELECT m.home_team_id, m.away_team_id, m.home_score, m.away_score
+			FROM matches m
+			WHERE m.status = 'finished'
+			  AND m.kickoff_at < $2
+			  %s
+			ORDER BY m.kickoff_at DESC
+			LIMIT $3
+		)
+		SELECT COALESCE(AVG(pts), 0) / 3.0 FROM (
+			SELECT CASE
+				WHEN home_team_id = $1 AND home_score > away_score THEN 3.0
+				WHEN away_team_id = $1 AND away_score > home_score THEN 3.0
+				WHEN home_score = away_score THEN 1.0
+				ELSE 0.0
+			END AS pts
+			FROM recent
+		) f
+	`, venueFilter)
+
+	var form float64
+	err := s.pool.QueryRow(ctx, query, teamID, before, limit).Scan(&form)
+	return form, err
+}
+
+func (s *Store) GetLeagueAverageGoals(ctx context.Context, leagueID string, before time.Time, limit int) (float64, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var avg float64
+	err := s.pool.QueryRow(ctx, `
+		WITH recent AS (
+			SELECT m.home_score, m.away_score
+			FROM matches m
+			WHERE m.league_id = $1
+			  AND m.status = 'finished'
+			  AND m.kickoff_at < $2
+			  AND m.home_score IS NOT NULL
+			  AND m.away_score IS NOT NULL
+			ORDER BY m.kickoff_at DESC
+			LIMIT $3
+		)
+		SELECT COALESCE(AVG((home_score + away_score)::float / 2.0), 0) FROM recent
+	`, leagueID, before, limit).Scan(&avg)
+	return avg, err
+}
+
+func (s *Store) GetTeamAvailability(ctx context.Context, teamID string) (float64, error) {
+	var injuryCount int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM injuries
+		WHERE team_id = $1 AND is_active = true
+	`, teamID).Scan(&injuryCount)
+	if err != nil {
+		return 0, err
+	}
+	score := 1.0 - float64(injuryCount)*0.05
+	if score < 0.5 {
+		score = 0.5
+	}
+	return score, nil
+}
+
 func (s *Store) CreateUser(ctx context.Context, email, passwordHash, displayName string) (*User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO users (email, password_hash, display_name)
-		VALUES ($1, $2, $3) RETURNING id, email, display_name
-	`, email, passwordHash, displayName).Scan(&u.ID, &u.Email, &u.DisplayName)
+		VALUES ($1, $2, $3) RETURNING id, email, display_name, created_at
+	`, email, passwordHash, displayName).Scan(&u.ID, &u.Email, &u.DisplayName, &u.CreatedAt)
 	return &u, err
 }
 
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, COALESCE(display_name,'') FROM users WHERE email = $1
-	`, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName)
+		SELECT id, email, password_hash, COALESCE(display_name,''), created_at
+		FROM users WHERE email = $1
+	`, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &u, nil
+}
+
+func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
+	var u User
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, email, COALESCE(display_name,''), created_at
+		FROM users WHERE id = $1
+	`, id).Scan(&u.ID, &u.Email, &u.DisplayName, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (s *Store) CountCouponsByUser(ctx context.Context, userID string) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM saved_coupons WHERE user_id = $1
+	`, userID).Scan(&count)
+	return count, err
+}
+
+func (s *Store) UpdateUserDisplayName(ctx context.Context, userID, displayName string) (*User, error) {
+	var u User
+	err := s.pool.QueryRow(ctx, `
+		UPDATE users SET display_name = $2 WHERE id = $1
+		RETURNING id, email, COALESCE(display_name,''), created_at
+	`, userID, displayName).Scan(&u.ID, &u.Email, &u.DisplayName, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+type PublicStats struct {
+	MatchesToday      int `json:"matches_today"`
+	LiveMatches       int `json:"live_matches"`
+	FinishedMatches   int `json:"finished_matches"`
+	MatchStatistics   int `json:"match_statistics"`
+	Predictions       int `json:"predictions"`
+	Outcomes          int `json:"outcomes"`
+}
+
+func (s *Store) GetPublicStats(ctx context.Context) (*PublicStats, error) {
+	var st PublicStats
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*)::int FROM matches m
+			 JOIN leagues l ON l.id = m.league_id
+			 WHERE l.external_id IN (39,140,135,78,61) AND m.kickoff_at::date = CURRENT_DATE),
+			(SELECT COUNT(*)::int FROM matches WHERE status = 'live'),
+			(SELECT COUNT(*)::int FROM matches WHERE status = 'finished'),
+			(SELECT COUNT(*)::int FROM match_statistics),
+			(SELECT COUNT(*)::int FROM predictions),
+			(SELECT COUNT(*)::int FROM prediction_outcomes)
+	`).Scan(&st.MatchesToday, &st.LiveMatches, &st.FinishedMatches, &st.MatchStatistics, &st.Predictions, &st.Outcomes)
+	if err != nil {
+		return nil, err
+	}
+	return &st, nil
 }
 
 func (s *Store) SavePrediction(ctx context.Context, p *Prediction) error {
@@ -367,6 +599,83 @@ func (s *Store) GetCoupon(ctx context.Context, id string) (map[string]interface{
 	}, rows.Err()
 }
 
+func (s *Store) ListCouponsByUser(ctx context.Context, userID string) ([]map[string]interface{}, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, name, created_at,
+			(SELECT COUNT(*) FROM coupon_selections cs WHERE cs.coupon_id = saved_coupons.id)
+		FROM saved_coupons
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT 50
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var coupons []map[string]interface{}
+	for rows.Next() {
+		var id, name string
+		var createdAt time.Time
+		var selectionCount int
+		if err := rows.Scan(&id, &name, &createdAt, &selectionCount); err != nil {
+			return nil, err
+		}
+		coupons = append(coupons, map[string]interface{}{
+			"id":              id,
+			"name":            name,
+			"created_at":      createdAt,
+			"selection_count": selectionCount,
+		})
+	}
+	return coupons, rows.Err()
+}
+
+func (s *Store) GetCouponForUser(ctx context.Context, couponID, userID string) (map[string]interface{}, error) {
+	var ownerID *string
+	err := s.pool.QueryRow(ctx, `SELECT user_id FROM saved_coupons WHERE id = $1`, couponID).Scan(&ownerID)
+	if err != nil || ownerID == nil || *ownerID != userID {
+		return nil, fmt.Errorf("not found")
+	}
+	return s.GetCoupon(ctx, couponID)
+}
+
+type PerformanceTrend struct {
+	Period   string  `json:"period"`
+	Market   string  `json:"market"`
+	Accuracy float64 `json:"accuracy"`
+	Samples  int     `json:"sample_size"`
+}
+
+func (s *Store) GetPerformanceTrend(ctx context.Context) ([]PerformanceTrend, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT to_char(date_trunc('week', m.kickoff_at), 'YYYY-MM-DD') AS period,
+			po.market,
+			AVG(CASE WHEN po.is_correct THEN 1.0 ELSE 0.0 END) AS accuracy,
+			COUNT(*)::int AS samples
+		FROM prediction_outcomes po
+		JOIN predictions p ON p.id = po.prediction_id
+		JOIN matches m ON m.id = p.match_id
+		GROUP BY 1, po.market
+		ORDER BY 1 DESC, po.market
+		LIMIT 100
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var trend []PerformanceTrend
+	for rows.Next() {
+		var t PerformanceTrend
+		if err := rows.Scan(&t.Period, &t.Market, &t.Accuracy, &t.Samples); err != nil {
+			return nil, err
+		}
+		trend = append(trend, t)
+	}
+	return trend, rows.Err()
+}
+
 func (s *Store) GetModelPerformance(ctx context.Context) ([]ModelPerformance, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT model_name, model_version, market, accuracy, log_loss, brier_score, sample_size
@@ -388,35 +697,94 @@ func (s *Store) GetModelPerformance(ctx context.Context) ([]ModelPerformance, er
 }
 
 func (s *Store) EvaluateFinishedPredictions(ctx context.Context) (int, error) {
+	scoreCount, err := s.evaluateScoreMarkets(ctx)
+	if err != nil {
+		return 0, err
+	}
+	statsCount, err := s.evaluateStatsMarkets(ctx)
+	if err != nil {
+		return scoreCount, err
+	}
+	return scoreCount + statsCount, nil
+}
+
+func (s *Store) evaluateScoreMarkets(ctx context.Context) (int, error) {
 	result, err := s.pool.Exec(ctx, `
 		INSERT INTO prediction_outcomes (prediction_id, market, predicted_probability, actual_outcome, is_correct)
 		SELECT p.id, key, (p.predictions->>key)::decimal,
 			CASE WHEN key = 'home_win' THEN (m.home_score > m.away_score)
 				WHEN key = 'draw' THEN (m.home_score = m.away_score)
 				WHEN key = 'away_win' THEN (m.home_score < m.away_score)
+				WHEN key = 'over_1_5' THEN ((m.home_score + m.away_score) > 1)
 				WHEN key = 'over_2_5' THEN ((m.home_score + m.away_score) > 2)
+				WHEN key = 'over_3_5' THEN ((m.home_score + m.away_score) > 3)
 				WHEN key = 'btts' THEN (m.home_score > 0 AND m.away_score > 0)
+				WHEN key = 'btts_no' THEN NOT (m.home_score > 0 AND m.away_score > 0)
 				ELSE false END,
 			CASE WHEN (p.predictions->>key)::decimal >= 0.5 THEN
 				CASE WHEN key = 'home_win' THEN (m.home_score > m.away_score)
 					WHEN key = 'draw' THEN (m.home_score = m.away_score)
 					WHEN key = 'away_win' THEN (m.home_score < m.away_score)
+					WHEN key = 'over_1_5' THEN ((m.home_score + m.away_score) > 1)
 					WHEN key = 'over_2_5' THEN ((m.home_score + m.away_score) > 2)
+					WHEN key = 'over_3_5' THEN ((m.home_score + m.away_score) > 3)
 					WHEN key = 'btts' THEN (m.home_score > 0 AND m.away_score > 0)
+					WHEN key = 'btts_no' THEN NOT (m.home_score > 0 AND m.away_score > 0)
 					ELSE false END
 			ELSE NOT CASE WHEN key = 'home_win' THEN (m.home_score > m.away_score)
 				WHEN key = 'draw' THEN (m.home_score = m.away_score)
 				WHEN key = 'away_win' THEN (m.home_score < m.away_score)
+				WHEN key = 'over_1_5' THEN ((m.home_score + m.away_score) > 1)
 				WHEN key = 'over_2_5' THEN ((m.home_score + m.away_score) > 2)
+				WHEN key = 'over_3_5' THEN ((m.home_score + m.away_score) > 3)
 				WHEN key = 'btts' THEN (m.home_score > 0 AND m.away_score > 0)
+				WHEN key = 'btts_no' THEN NOT (m.home_score > 0 AND m.away_score > 0)
 				ELSE false END END
 		FROM predictions p
 		JOIN matches m ON m.id = p.match_id
 		CROSS JOIN LATERAL jsonb_object_keys(p.predictions) AS key
 		WHERE m.status = 'finished' AND m.home_score IS NOT NULL
+		AND key IN ('home_win','draw','away_win','over_1_5','over_2_5','over_3_5','btts','btts_no')
 		AND NOT EXISTS (
 			SELECT 1 FROM prediction_outcomes po
 			WHERE po.prediction_id = p.id AND po.market = key
+		)
+		ON CONFLICT DO NOTHING
+	`)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
+}
+
+func (s *Store) evaluateStatsMarkets(ctx context.Context) (int, error) {
+	result, err := s.pool.Exec(ctx, `
+		INSERT INTO prediction_outcomes (prediction_id, market, predicted_probability, actual_outcome, is_correct)
+		SELECT p.id, market.key,
+			(p.predictions->>market.key)::decimal,
+			market.actual,
+			CASE WHEN (p.predictions->>market.key)::decimal >= 0.5 THEN market.actual ELSE NOT market.actual END
+		FROM predictions p
+		JOIN matches m ON m.id = p.match_id
+		JOIN (
+			SELECT match_id,
+				COALESCE(SUM(corner_kicks), 0) AS total_corners,
+				COALESCE(SUM(total_shots), 0) AS total_shots,
+				COALESCE(SUM(shots_on_goal), 0) AS total_shots_on_target
+			FROM match_statistics
+			GROUP BY match_id
+		) ms ON ms.match_id = m.id
+		CROSS JOIN LATERAL (
+			SELECT 'over_corners_9_5' AS key, (ms.total_corners > 9.5) AS actual
+			UNION ALL SELECT 'over_corners_9.5', (ms.total_corners > 9.5)
+			UNION ALL SELECT 'over_shots_22_5', (ms.total_shots > 22.5)
+			UNION ALL SELECT 'over_shots_on_target_8_5', (ms.total_shots_on_target > 8.5)
+		) market
+		WHERE m.status = 'finished'
+		AND p.predictions ? market.key
+		AND NOT EXISTS (
+			SELECT 1 FROM prediction_outcomes po
+			WHERE po.prediction_id = p.id AND po.market = market.key
 		)
 		ON CONFLICT DO NOTHING
 	`)

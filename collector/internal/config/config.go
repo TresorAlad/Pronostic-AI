@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"time"
 
@@ -19,6 +20,7 @@ type Config struct {
 	BackfillStartYear int
 	LiveScope         string // top5 or all
 	LiveMaxFixtures   int
+	BackendURL        string
 }
 
 func Load() (*Config, error) {
@@ -55,7 +57,7 @@ func Load() (*Config, error) {
 		}
 	}
 
-	return &Config{
+	cfg := &Config{
 		DatabaseURL:       getEnv("DATABASE_URL", "postgres://prono:prono_secret@localhost:5432/prono?sslmode=disable"),
 		RedisURL:          getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		APIFootballKey:    os.Getenv("API_FOOTBALL_KEY"),
@@ -67,7 +69,16 @@ func Load() (*Config, error) {
 		BackfillStartYear: backfillStart,
 		LiveScope:         liveScope,
 		LiveMaxFixtures:   liveMax,
-	}, nil
+		BackendURL:        getEnv("BACKEND_URL", "http://localhost:8082"),
+	}
+	return validate(cfg)
+}
+
+func validate(cfg *Config) (*Config, error) {
+	if cfg.APIFootballKey == "" {
+		return nil, errors.New("API_FOOTBALL_KEY is required")
+	}
+	return cfg, nil
 }
 
 func getEnv(key, fallback string) string {

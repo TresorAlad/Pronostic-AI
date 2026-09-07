@@ -7,15 +7,17 @@ import os
 import pandas as pd
 from sqlalchemy import create_engine
 
-from features.team_form import compute_team_form
 from features.attack_defense import compute_strength
+from features.match_context import compute_match_context
 from features.player_availability import compute_availability
+from features.team_form import compute_team_form
 
 
 def load_data(database_url: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     url = database_url or os.getenv(
         "DATABASE_URL", "postgresql://prono:prono_secret@localhost:5432/prono"
     )
+    url = url.replace("postgres://", "postgresql://", 1)
     engine = create_engine(url)
 
     matches = pd.read_sql(
@@ -45,21 +47,37 @@ def build_features_for_match(
     kickoff = match_row["kickoff_at"]
     home_id = match_row["home_team_id"]
     away_id = match_row["away_team_id"]
+    league_id = match_row["league_id"]
 
     home_form = compute_team_form(matches_df, stats_df, home_id, kickoff)
     away_form = compute_team_form(matches_df, stats_df, away_id, kickoff)
     home_home_form = compute_team_form(matches_df, stats_df, home_id, kickoff, venue="home")
     away_away_form = compute_team_form(matches_df, stats_df, away_id, kickoff, venue="away")
-    strength = compute_strength(home_form, away_form)
+
+    league_matches = matches_df[
+        (matches_df["league_id"] == league_id)
+        & (matches_df["kickoff_at"] < kickoff)
+        & (matches_df["status"] == "finished")
+    ].tail(200)
+    if not league_matches.empty:
+        league_avg_goals = (
+            (league_matches["home_score"].fillna(0) + league_matches["away_score"].fillna(0)) / 2.0
+        ).mean()
+    else:
+        league_avg_goals = None
+
+    strength = compute_strength(home_form, away_form, league_avg_goals)
+    context = compute_match_context(matches_df, home_id, away_id, kickoff)
 
     features = {
         "match_id": match_row["id"],
         "kickoff_at": kickoff,
         **{f"home_{k}": v for k, v in home_form.items()},
         **{f"away_{k}": v for k, v in away_form.items()},
-        **home_home_form,
-        **away_away_form,
+        "home_home_form": home_home_form.get("home_form", 0),
+        "away_away_form": away_away_form.get("away_form", 0),
         **strength,
+        **context,
         "home_availability": compute_availability(injuries_df, home_id, kickoff),
         "away_availability": compute_availability(injuries_df, away_id, kickoff),
     }

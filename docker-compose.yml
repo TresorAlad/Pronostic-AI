@@ -1,3 +1,27 @@
+# Pronostic-AI - stack complète en une commande :
+#   docker compose up -d --build
+# Application : http://localhost:5173
+#
+# Prérequis : fichier .env à la racine (copier .env.example, renseigner API_FOOTBALL_KEY)
+
+x-app-environment: &app-environment
+  POSTGRES_USER: ${POSTGRES_USER:-prono}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prono_secret}
+  POSTGRES_DB: ${POSTGRES_DB:-prono}
+  DATABASE_URL: postgres://${POSTGRES_USER:-prono}:${POSTGRES_PASSWORD:-prono_secret}@postgres:5432/${POSTGRES_DB:-prono}?sslmode=disable
+  REDIS_URL: redis://redis:6379/0
+  NEO4J_URI: bolt://neo4j:7687
+  NEO4J_USER: ${NEO4J_USER:-neo4j}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_secret}
+  BACKEND_PORT: "8080"
+  ML_SERVICE_URL: http://ml-service:5000
+  ML_SERVICE_PORT: "5000"
+  AI_AGENT_URL: http://ai-agent:5001
+  AI_AGENT_PORT: "5001"
+  CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
+  ML_MODELS_DIR: /app/models
+  APP_ENV: ${APP_ENV:-development}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -15,7 +39,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prono} -d ${POSTGRES_DB:-prono}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 8
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -28,7 +53,8 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 8
+    restart: unless-stopped
 
   neo4j:
     image: neo4j:5-community
@@ -45,42 +71,17 @@ services:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
-
-  collector:
-    build:
-      context: ./collector
-      dockerfile: Dockerfile
-    container_name: prono-collector
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: prono-backend
-    env_file: .env
-    ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      retries: 8
     restart: unless-stopped
 
   ml-service:
     build:
-      context: ./ml-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ml-service/Dockerfile
     container_name: prono-ml-service
     env_file: .env
+    environment:
+      <<: *app-environment
     ports:
       - "5000:5000"
     volumes:
@@ -96,6 +97,8 @@ services:
       dockerfile: Dockerfile
     container_name: prono-ai-agent
     env_file: .env
+    environment:
+      <<: *app-environment
     ports:
       - "5001:5001"
     depends_on:
@@ -105,13 +108,53 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: prono-backend
+    env_file: .env
+    environment:
+      <<: *app-environment
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ml-service:
+        condition: service_started
+      ai-agent:
+        condition: service_started
+    restart: unless-stopped
+
+  collector:
+    build:
+      context: ./collector
+      dockerfile: Dockerfile
+    container_name: prono-collector
+    env_file: .env
+    environment:
+      <<: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api/v1
     container_name: prono-frontend
     ports:
-      - "3000:80"
+      - "5173:80"
     depends_on:
       - backend
     restart: unless-stopped
