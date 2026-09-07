@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.card {
+  @apply bg-pitch-800 rounded-xl border border-pitch-700 p-4 shadow-lg;
+}
+
+.btn-primary {
+  @apply bg-accent hover:bg-accent-dark text-white font-medium px-4 py-2 rounded-lg transition-colors;
+}
+
+.badge-confidence {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-high {
+  @apply badge-confidence bg-green-900 text-green-300;
+}
+
+.badge-medium {
+  @apply badge-confidence bg-yellow-900 text-yellow-300;
+}
+
+.badge-low {
+  @apply badge-confidence bg-red-900 text-red-300;
+}
+
+.badge-abstain {
+  @apply badge-confidence bg-gray-800 text-gray-400;
+}

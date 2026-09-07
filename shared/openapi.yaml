@@ -1,0 +1,79 @@
+openapi: 3.0.3
+info:
+  title: Football AI Predictor API
+  version: 1.0.0
+  description: API REST pour pronostics football intelligents
+
+servers:
+  - url: http://localhost:8080/api/v1
+
+paths:
+  /auth/register:
+    post:
+      summary: Inscription utilisateur
+      tags: [Auth]
+  /auth/login:
+    post:
+      summary: Connexion utilisateur
+      tags: [Auth]
+  /matches/today:
+    get:
+      summary: Matchs du jour (Top 5)
+      tags: [Matches]
+  /matches/{id}:
+    get:
+      summary: Détail d'un match
+      tags: [Matches]
+  /matches/{id}/stats:
+    get:
+      summary: Statistiques du match
+      tags: [Matches]
+  /matches/{id}/prediction:
+    get:
+      summary: Prédiction ML pour un match
+      tags: [Predictions]
+  /matches/{id}/analyze:
+    post:
+      summary: Analyse complète ML + Agent IA
+      tags: [Predictions]
+  /leagues:
+    get:
+      summary: Liste des ligues
+      tags: [Leagues]
+  /predictions/performance:
+    get:
+      summary: Performance des modèles
+      tags: [Predictions]
+  /coupons/generate:
+    post:
+      summary: Générer un coupon IA
+      tags: [Coupons]
+  /coupons/{id}:
+    get:
+      summary: Récupérer un coupon sauvegardé
+      tags: [Coupons]
+
+components:
+  schemas:
+    Prediction:
+      type: object
+      properties:
+        match_id:
+          type: string
+        model_version:
+          type: string
+        predictions:
+          type: object
+        confidence:
+          type: object
+        no_bet_recommended:
+          type: boolean
+        data_snapshot_at:
+          type: string
+          format: date-time
+        ai_analysis:
+          type: string
+        ai_reasons:
+          type: array
+          items:
+            type: string

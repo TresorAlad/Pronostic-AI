@@ -1,0 +1,32 @@
+name: CI Go
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['collector/**', 'backend/**', '.github/workflows/ci-go.yml']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [collector, backend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build ${{ matrix.service }}
+        working-directory: ${{ matrix.service }}
+        run: |
+          go mod download
+          if [ "${{ matrix.service }}" = "collector" ]; then
+            go build -v ./cmd/collector
+          else
+            go build -v ./cmd/server
+          fi
+      - name: Vet
+        working-directory: ${{ matrix.service }}
+        run: go vet ./...
