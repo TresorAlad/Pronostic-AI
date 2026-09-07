@@ -23,3 +23,5 @@ coverage/
 backend/bin/
 collector/bin/
 frontend/.vite/
+backend/server
+collector/collector
