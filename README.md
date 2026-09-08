@@ -14,16 +14,56 @@ Plateforme intelligente d'analyse et de prédiction des matchs de football.
 ## Prérequis
 
 - Docker et Docker Compose
-- Go 1.22+
-- Python 3.11+
-- Node.js 20+
+- Go 1.22+ (mode dev local uniquement)
+- Python 3.11+ (mode dev local uniquement)
+- Node.js 20+ (mode dev local uniquement)
+
+## Démarrage en une commande (Docker Compose)
+
+Toute la stack est définie dans [`docker-compose.yml`](docker-compose.yml) : PostgreSQL, Redis, Neo4j, backend, collector, ML, agent IA et frontend.
+
+```bash
+# 1. Configuration (une seule fois)
+cp .env.example .env
+# Renseigner au minimum API_FOOTBALL_KEY et JWT_SECRET dans .env
+
+# 2. Lancer tout le projet
+docker compose up -d --build
+```
+
+Équivalent via Makefile :
+
+```bash
+make up
+```
+
+Services disponibles après démarrage :
+
+| Service | URL |
+|---------|-----|
+| Application (frontend) | http://localhost:5173 |
+| Backend API | http://localhost:8080 |
+| ML Service | http://localhost:5000 |
+| AI Agent | http://localhost:5001 |
+| Collector | http://localhost:8090 |
+| Neo4j Browser | http://localhost:7474 |
+
+Commandes utiles :
+
+```bash
+make logs    # suivre les logs de tous les conteneurs
+make down    # arrêter et retirer la stack
+make health  # vérifier que les services répondent
+```
+
+Les migrations PostgreSQL (`infra/postgres/migrations/`) sont appliquées automatiquement au premier démarrage du conteneur `postgres`.
 
 ## Deux modes de démarrage
 
 | Mode | Commande | Usage |
 |------|----------|-------|
+| **Docker (recommandé)** | `docker compose up -d --build` ou `make up` | Stack complète via `docker-compose.yml`, backend `:8080`, frontend `:5173` |
 | **Dev hot-reload** | `./scripts/dev-start.sh` | Backend `:8082`, Vite `:5173`, services locaux |
-| **Prod-like Docker** | `make up` | Stack complète via `docker-compose.yml`, backend `:8080`, frontend `:5173` |
 
 Ports harmonisés dans `.env.example` :
 - Dev : `BACKEND_PORT=8082`, `VITE_API_URL=/api/v1` (proxy Vite)
