@@ -102,8 +102,8 @@ export default function Dashboard() {
           <h1 className="page-title">Matchs du jour</h1>
           <p className="page-subtitle">
             {isToday
-              ? "Les principaux matchs d'aujourd'hui"
-              : `Les principaux matchs du ${formatDisplayDate(dateFilter)}`}
+              ? "Compétitions prioritaires : LDC, LE, Top 5 européen — puis secondaires"
+              : `Matchs du ${formatDisplayDate(dateFilter)} (triés par importance compétition)`}
           </p>
           <p className="text-sm text-slate-500 mt-1">
             {matchCount} match{matchCount > 1 ? 's' : ''} affiché{matchCount > 1 ? 's' : ''}

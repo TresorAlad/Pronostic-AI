@@ -1,12 +1,15 @@
 {
-  "top_matches_max": 10,
+  "top_matches_max": 20,
   "coupon_match_pool_max": 200,
-  "coupon_extra_external_ids": [3, 848, 40],
   "leagues": [
-    { "external_id": 39, "label": "Premier League", "priority": 1 },
-    { "external_id": 140, "label": "La Liga", "priority": 2 },
-    { "external_id": 135, "label": "Serie A", "priority": 3 },
-    { "external_id": 78, "label": "Bundesliga", "priority": 4 },
-    { "external_id": 61, "label": "Ligue 1", "priority": 5 }
+    { "external_id": 2, "label": "UEFA Champions League", "priority": 1, "tier": "continental" },
+    { "external_id": 3, "label": "UEFA Europa League", "priority": 2, "tier": "continental" },
+    { "external_id": 848, "label": "UEFA Conference League", "priority": 3, "tier": "continental" },
+    { "external_id": 39, "label": "Premier League", "priority": 10, "tier": "top5" },
+    { "external_id": 140, "label": "La Liga", "priority": 11, "tier": "top5" },
+    { "external_id": 135, "label": "Serie A", "priority": 12, "tier": "top5" },
+    { "external_id": 78, "label": "Bundesliga", "priority": 13, "tier": "top5" },
+    { "external_id": 61, "label": "Ligue 1", "priority": 14, "tier": "top5" },
+    { "external_id": 40, "label": "Championship", "priority": 50, "tier": "secondary" }
   ]
 }

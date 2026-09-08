@@ -14,14 +14,15 @@ import (
 )
 
 type Handler struct {
-	store    *db.Store
-	mlClient *clients.MLClient
-	aiClient *clients.AIAgentClient
-	redis    *redis.Client
+	store           *db.Store
+	mlClient        *clients.MLClient
+	aiClient        *clients.AIAgentClient
+	redis           *redis.Client
+	historyEnricher *HistoryEnricher
 }
 
-func NewHandler(store *db.Store, ml *clients.MLClient, ai *clients.AIAgentClient, redis *redis.Client) *Handler {
-	return &Handler{store: store, mlClient: ml, aiClient: ai, redis: redis}
+func NewHandler(store *db.Store, ml *clients.MLClient, ai *clients.AIAgentClient, redis *redis.Client, enricher *HistoryEnricher) *Handler {
+	return &Handler{store: store, mlClient: ml, aiClient: ai, redis: redis, historyEnricher: enricher}
 }
 
 func (h *Handler) Routes() chi.Router {

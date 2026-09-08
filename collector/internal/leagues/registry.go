@@ -13,6 +13,7 @@ type Entry struct {
 	ExternalID int    `json:"external_id"`
 	Label      string `json:"label"`
 	Priority   int    `json:"priority"`
+	Tier       string `json:"tier,omitempty"` // continental, top5, secondary
 }
 
 type Config struct {
@@ -85,12 +86,44 @@ func Load() (*Config, error) {
 			loadErr = fmt.Errorf("leagues config: no leagues defined")
 			return
 		}
+		cfg.mergeLegacyExtras()
 		sort.Slice(cfg.Leagues, func(i, j int) bool {
 			return cfg.Leagues[i].Priority < cfg.Leagues[j].Priority
 		})
 		cached = &cfg
 	})
 	return cached, loadErr
+}
+
+func (c *Config) mergeLegacyExtras() {
+	if len(c.CouponExtraExternalIDs) == 0 {
+		return
+	}
+	seen := make(map[int]struct{}, len(c.Leagues))
+	maxPriority := 0
+	for _, l := range c.Leagues {
+		seen[l.ExternalID] = struct{}{}
+		if l.Priority > maxPriority {
+			maxPriority = l.Priority
+		}
+	}
+	next := maxPriority + 10
+	if next < 100 {
+		next = 100
+	}
+	for _, id := range c.CouponExtraExternalIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		c.Leagues = append(c.Leagues, Entry{
+			ExternalID: id,
+			Label:      fmt.Sprintf("League %d", id),
+			Priority:   next,
+			Tier:       "secondary",
+		})
+		seen[id] = struct{}{}
+		next += 10
+	}
 }
 
 func MustLoad() *Config {
@@ -102,6 +135,10 @@ func MustLoad() *Config {
 }
 
 func (c *Config) TrackedExternalIDs() []int {
+	return c.DisplayExternalIDs()
+}
+
+func (c *Config) DisplayExternalIDs() []int {
 	ids := make([]int, len(c.Leagues))
 	for i, l := range c.Leagues {
 		ids[i] = l.ExternalID
@@ -109,24 +146,18 @@ func (c *Config) TrackedExternalIDs() []int {
 	return ids
 }
 
-func (c *Config) CouponExternalIDs() []int {
-	seen := make(map[int]struct{})
+func (c *Config) PredictableExternalIDs() []int {
 	var ids []int
-	for _, id := range c.TrackedExternalIDs() {
-		if _, ok := seen[id]; ok {
-			continue
+	for _, l := range c.Leagues {
+		if l.Tier == "continental" || l.Tier == "top5" {
+			ids = append(ids, l.ExternalID)
 		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	for _, id := range c.CouponExtraExternalIDs {
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (c *Config) CouponExternalIDs() []int {
+	return c.DisplayExternalIDs()
 }
 
 func (c *Config) TopMatchesMax() int {
@@ -146,10 +177,5 @@ func (c *Config) IsTracked(externalID int) bool {
 }
 
 func (c *Config) IsCouponLeague(externalID int) bool {
-	for _, id := range c.CouponExternalIDs() {
-		if id == externalID {
-			return true
-		}
-	}
-	return false
+	return c.IsTracked(externalID)
 }

@@ -2,18 +2,21 @@
 #   docker compose up -d --build
 # Application : http://localhost:5173
 #
-# Prérequis : fichier .env à la racine (copier .env.example, renseigner API_FOOTBALL_KEY)
+# Prérequis : fichier .env à la racine (renseigner API_FOOTBALL_KEY, MISTRAL_API_KEY)
+# ML : si ml-service/models/ est vide, les modèles demo sont entraînés automatiquement au démarrage.
 
 x-app-environment: &app-environment
   POSTGRES_USER: ${POSTGRES_USER:-prono}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prono_secret}
   POSTGRES_DB: ${POSTGRES_DB:-prono}
-  DATABASE_URL: postgres://${POSTGRES_USER:-prono}:${POSTGRES_PASSWORD:-prono_secret}@postgres:5432/${POSTGRES_DB:-prono}?sslmode=disable
+  DATABASE_URL: ${DATABASE_URL:-postgres://prono:prono_secret@postgres:5432/prono?sslmode=disable}
   REDIS_URL: redis://redis:6379/0
   NEO4J_URI: bolt://neo4j:7687
   NEO4J_USER: ${NEO4J_USER:-neo4j}
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_secret}
   BACKEND_PORT: "8080"
+  BACKEND_URL: http://backend:8080
+  LEAGUES_CONFIG_PATH: /config/leagues.json
   ML_SERVICE_URL: http://ml-service:5000
   ML_SERVICE_PORT: "5000"
   AI_AGENT_URL: http://ai-agent:5001
@@ -70,8 +73,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 8
+      timeout: 10s
+      retries: 18
+      start_period: 120s
     restart: unless-stopped
 
   ml-service:
@@ -86,9 +90,18 @@ services:
       - "5000:5000"
     volumes:
       - ./ml-service/models:/app/models
-    depends_on:
-      postgres:
-        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:5000/models/status', timeout=5)); exit(0 if d.get('models_loaded') else 1)",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 180s
     restart: unless-stopped
 
   ai-agent:
@@ -110,13 +123,15 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: prono-backend
     env_file: .env
     environment:
       <<: *app-environment
       COLLECTOR_URL: http://collector:8090
+    volumes:
+      - ./config/leagues.json:/config/leagues.json:ro
     ports:
       - "8080:8080"
     depends_on:
@@ -125,7 +140,7 @@ services:
       redis:
         condition: service_healthy
       ml-service:
-        condition: service_started
+        condition: service_healthy
       ai-agent:
         condition: service_started
     restart: unless-stopped
