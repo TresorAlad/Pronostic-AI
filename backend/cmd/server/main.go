@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/prono/backend/internal/apifootball"
 	"github.com/prono/backend/internal/auth"
 	"github.com/prono/backend/internal/clients"
 	collectorhook "github.com/prono/backend/internal/collector"
@@ -51,11 +52,13 @@ func main() {
 
 	mlClient := clients.NewMLClient(cfg.MLServiceURL)
 	aiClient := clients.NewAIAgentClient(cfg.AIAgentURL)
+	apiFootball := apifootball.NewClient(cfg.APIFootballBase, cfg.APIFootballHost, cfg.APIFootballKey, cfg.APIFootballAuth)
+	historyEnricher := predictions.NewHistoryEnricher(store, apiFootball)
 
 	authSvc := auth.NewService(store, cfg.JWTSecret, cfg.JWTExpiration)
 	collectorTrigger := collectorhook.NewTrigger(cfg.CollectorURL, redisClient)
 	matchHandler := matches.NewHandler(store, collectorTrigger)
-	predHandler := predictions.NewHandler(store, mlClient, aiClient, redisClient)
+	predHandler := predictions.NewHandler(store, mlClient, aiClient, redisClient, historyEnricher)
 	couponHandler := coupons.NewHandler(store, predHandler)
 	evalHandler := evaluation.NewHandler(store)
 	statsHandler := stats.NewHandler(store)

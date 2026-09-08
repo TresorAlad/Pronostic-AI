@@ -31,7 +31,7 @@ CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.55"))
 
 
 def fetch_context(state: AgentState) -> AgentState:
-    """Gather contextual information from features and Neo4j H2H."""
+    """Gather contextual information from features, historique individuel et H2H."""
     features = state.get("features", {})
     context = {
         "home_form": features.get("home_form", 0),
@@ -50,6 +50,30 @@ def fetch_context(state: AgentState) -> AgentState:
         "away_availability": features.get("away_availability", 1.0),
     }
 
+    home_history = features.get("home_recent_matches") or []
+    away_history = features.get("away_recent_matches") or []
+    h2h_db = features.get("h2h_history") or []
+    if home_history:
+        context["home_recent_matches"] = home_history[:10]
+        context["home_competitions"] = sorted(
+            {m.get("league_name") for m in home_history if m.get("league_name")}
+        )
+    if away_history:
+        context["away_recent_matches"] = away_history[:10]
+        context["away_competitions"] = sorted(
+            {m.get("league_name") for m in away_history if m.get("league_name")}
+        )
+    if h2h_db:
+        context["h2h_history"] = h2h_db[:8]
+        context["h2h_matches"] = len(h2h_db)
+
+    if features.get("data_quality"):
+        context["data_quality"] = features.get("data_quality")
+    if features.get("history_source_home"):
+        context["history_source_home"] = features.get("history_source_home")
+    if features.get("history_source_away"):
+        context["history_source_away"] = features.get("history_source_away")
+
     home_id = features.get("home_team_id") or state.get("home_team_id")
     away_id = features.get("away_team_id") or state.get("away_team_id")
     if home_id and away_id:
@@ -59,10 +83,13 @@ def fetch_context(state: AgentState) -> AgentState:
             kg = KnowledgeGraph()
             h2h = kg.get_h2h_context(str(home_id), str(away_id), limit=5)
             kg.close()
-            context["h2h_matches"] = len(h2h)
-            context["h2h_recent"] = h2h[:3]
+            if h2h:
+                context["h2h_graph_recent"] = h2h[:3]
+            if "h2h_matches" not in context:
+                context["h2h_matches"] = len(h2h)
         except Exception:
-            context["h2h_matches"] = 0
+            if "h2h_matches" not in context:
+                context["h2h_matches"] = 0
 
     odds = state.get("odds") or []
     if odds:
@@ -79,11 +106,15 @@ def fetch_context(state: AgentState) -> AgentState:
 
 
 def validate_ml_output(state: AgentState) -> AgentState:
-    """Ensure we only use ML-provided probabilities."""
+    """Ensure we only use ML-provided probabilities when available."""
     predictions = state.get("predictions", {})
-    if not predictions:
+    features = state.get("features", {})
+    has_team_history = bool(
+        features.get("home_recent_matches") or features.get("away_recent_matches")
+    )
+    if not predictions and not has_team_history:
         state["abstain"] = True
-        state["analysis"] = "Donnees ML insuffisantes pour produire une analyse."
+        state["analysis"] = "Donnees ML et historique equipes insuffisants pour produire une analyse."
         state["reasons"] = []
         state["recommended_markets"] = []
     return state
@@ -98,7 +129,7 @@ def _get_llm():
     if provider == "mistral":
         from langchain_mistralai import ChatMistralAI
 
-        api_key = os.gvetenv("MISTRAL_API_KEY") or os.getenv("LLM_API_KEY")
+        api_key = os.getenv("MISTRAL_API_KEY") or os.getenv("LLM_API_KEY")
         if not api_key:
             raise ValueError("MISTRAL_API_KEY manquante")
         return ChatMistralAI(
@@ -122,8 +153,8 @@ def analyze_match(state: AgentState) -> AgentState:
     home = state["home_team"]
     away = state["away_team"]
     ctx = state.get("context", {})
-    predictions = state["predictions"]
-    confidence = state["confidence"]
+    predictions = state.get("predictions") or {}
+    confidence = state.get("confidence") or {}
 
     mistral_key = os.getenv("MISTRAL_API_KEY", "")
     openai_key = os.getenv("LLM_API_KEY", "")
@@ -131,7 +162,7 @@ def analyze_match(state: AgentState) -> AgentState:
         openai_key and openai_key != "your_llm_api_key_here"
     )
 
-    if has_llm:
+    if has_llm and predictions:
         try:
             analysis, reasons = _llm_analyze(home, away, predictions, confidence, ctx)
             state["analysis"] = analysis
@@ -143,6 +174,10 @@ def analyze_match(state: AgentState) -> AgentState:
     else:
         analysis, reasons = _rule_based_analyze(home, away, predictions, confidence, ctx)
         state["analysis"] = analysis
+        state["reasons"] = reasons
+
+    if not state.get("reasons"):
+        _, reasons = _rule_based_analyze(home, away, predictions, confidence, ctx)
         state["reasons"] = reasons
 
     return state
@@ -211,81 +246,97 @@ def recommend_or_abstain(state: AgentState) -> AgentState:
     return state
 
 
+def _format_recent_matches(team_name: str, matches: list) -> str:
+    if not matches:
+        return ""
+    lines = [f"Derniers matchs de {team_name} (championnat, coupes, toutes compétitions) :"]
+    for m in matches[:6]:
+        venue = "dom." if m.get("is_home") else "ext."
+        comp = m.get("league_name", "?")
+        opp = m.get("opponent", "?")
+        gf = m.get("goals_for", 0)
+        ga = m.get("goals_against", 0)
+        res = m.get("result", "?")
+        date = m.get("date", "")
+        lines.append(f"- {date} [{comp}] {venue} vs {opp} {gf}-{ga} ({res})")
+    return "\n".join(lines)
+
+
+def _format_h2h(h2h: list) -> str:
+    if not h2h:
+        return ""
+    lines = ["Confrontations directes (toutes compétitions) :"]
+    for m in h2h[:5]:
+        comp = m.get("league_name", "?")
+        date = m.get("date", "")
+        home = m.get("home_team", "?")
+        away = m.get("away_team", "?")
+        hs = m.get("home_score", 0)
+        aws = m.get("away_score", 0)
+        lines.append(f"- {date} [{comp}] {home} {hs}-{aws} {away}")
+    return "\n".join(lines)
+
+
 def _rule_based_analyze(home, away, predictions, confidence, ctx) -> tuple[str, list]:
-    """Fallback analysis without LLM."""
-    parts = [f"Analyse du match {home} vs {away}.\n"]
+    """Fallback analysis without LLM — s'appuie sur historique equipes et proba ML si dispo."""
+    parts = [f"Synthese {home} vs {away}.\n"]
+    reasons = []
 
     home_form = ctx.get("home_form", 0)
     away_form = ctx.get("away_form", 0)
     if home_form > away_form + 0.15:
-        parts.append(f"{home} affiche une meilleure forme récente.")
+        parts.append(f"{home} affiche une meilleure forme recente (toutes competitions).")
+        reasons.append(f"Forme superieure de {home} sur les derniers matchs")
     elif away_form > home_form + 0.15:
-        parts.append(f"{away} est en meilleure dynamique.")
+        parts.append(f"{away} est en meilleure dynamique recente.")
+        reasons.append(f"Dynamique favorable a {away}")
 
-    if ctx.get("home_xg") and ctx.get("away_xg"):
+    home_hist = ctx.get("home_recent_matches") or []
+    away_hist = ctx.get("away_recent_matches") or []
+    if home_hist or away_hist:
+        if home_hist:
+            parts.append(_format_recent_matches(home, home_hist))
+            wins = sum(1 for m in home_hist if m.get("result") == "W")
+            reasons.append(f"{home} : {wins} victoire(s) sur {len(home_hist)} derniers matchs")
+        if away_hist:
+            parts.append(_format_recent_matches(away, away_hist))
+            wins = sum(1 for m in away_hist if m.get("result") == "W")
+            reasons.append(f"{away} : {wins} victoire(s) sur {len(away_hist)} derniers matchs")
+
+    h2h_history = ctx.get("h2h_history") or []
+    if h2h_history:
+        parts.append(_format_h2h(h2h_history))
+        reasons.append(f"{len(h2h_history)} confrontation(s) directe(s) analysee(s)")
+
+    quality = ctx.get("data_quality", "")
+    if quality in ("low", "estimated"):
+        parts.append("Donnees partielles : estimation basee sur historique disponible et moyennes de ligue.")
+
+    if predictions:
+        home_win = predictions.get("home_win", 0)
+        over_25 = predictions.get("over_2_5", 0)
+        btts = predictions.get("btts", 0)
         parts.append(
-            f"xG moyen : {home} {ctx['home_xg']:.2f} vs {away} {ctx['away_xg']:.2f}."
+            f"Probabilités du modele : victoire {home} {home_win:.0%}, "
+            f"+2,5 buts {over_25:.0%}, les deux marquent {btts:.0%}."
         )
-
-    h2h_count = ctx.get("h2h_matches", 0)
-    if h2h_count > 0:
-        parts.append(f"Historique direct (graphe) : {h2h_count} confrontations récentes en base.")
+        if over_25 > 0.6:
+            reasons.append("Historique offensif favorable au over 2,5 buts")
+        if btts > 0.55:
+            reasons.append("Les deux equipes marquent regulierement")
+        if home_win > 0.5:
+            reasons.append("Avantage domicile et forme superieure")
 
     if ctx.get("value_bets"):
-        parts.append("Value bets détectés (probabilité ML > cote implicite) :")
-        for row in ctx["value_bets"][:3]:
+        for row in ctx["value_bets"][:2]:
             ml_market = row.get("ml_market", row.get("market", ""))
             edge = float(row.get("value_edge") or 0)
-            parts.append(f"- {ml_market} : edge +{edge:.0%}")
+            reasons.append(f"Value detecte sur {ml_market} (+{edge:.0%})")
 
-    home_win = predictions.get("home_win", 0)
-    over_25 = predictions.get("over_2_5", 0)
-    btts = predictions.get("btts", 0)
-    over_corners = predictions.get("over_corners_9_5", predictions.get("over_corners_9.5", 0))
-    over_shots = predictions.get("over_shots_22_5", 0)
-    over_cards = predictions.get("over_cards_4_5", 0)
-    over_fouls = predictions.get("over_fouls_22_5", 0)
-    over_offsides = predictions.get("over_offsides_3_5", 0)
-    home_poss = predictions.get("home_possession_over_50", 0)
+    if not reasons:
+        reasons.append("Analyse basee sur l'historique recent individuel de chaque club")
 
-    parts.append(
-        f"Probabilités du modèle : victoire {home} {home_win:.0%}, "
-        f"+2,5 buts {over_25:.0%}, les deux marquent {btts:.0%}, "
-        f"+9,5 corners {over_corners:.0%}, +22,5 tirs {over_shots:.0%}."
-    )
-
-    if over_cards or over_fouls or over_offsides:
-        parts.append(
-            f"Marchés disciplinaires : +4,5 cartons {over_cards:.0%}, "
-            f"+22,5 fautes {over_fouls:.0%}, +3,5 hors-jeu {over_offsides:.0%}."
-        )
-
-    if home_poss > 0.55:
-        parts.append(f"{home} a {home_poss:.0%} de chances de dominer la possession (> 50 %).")
-
-    reasons = []
-    if over_25 > 0.6:
-        reasons.append("Historique offensif favorable au over 2,5 buts")
-    if btts > 0.55:
-        reasons.append("Les deux équipes marquent régulièrement")
-    if home_win > 0.5:
-        reasons.append("Avantage domicile et forme supérieure")
-    if ctx.get("home_xg", 0) and ctx["home_xg"] > 1.5:
-        reasons.append("xG élevé pour l'équipe domicile")
-    if ctx.get("home_possession", 0) > 55:
-        reasons.append("Domination habituelle à la possession")
-    if over_corners > 0.58:
-        reasons.append("Volume de corners attendu élevé")
-    if over_shots > 0.58:
-        reasons.append("Les deux équipes produisent beaucoup de tirs")
-    if over_cards > 0.58:
-        reasons.append("Match tendu avec cartons probables")
-    if over_fouls > 0.58:
-        reasons.append("Engagement physique, fautes fréquentes")
-    if over_offsides > 0.58:
-        reasons.append("Défenses hautes, hors-jeu attendus")
-
-    return "\n".join(parts), reasons
+    return "\n".join(parts), reasons[:6]
 
 
 def _llm_analyze(home, away, predictions, confidence, ctx) -> tuple[str, list]:
@@ -298,10 +349,12 @@ def _llm_analyze(home, away, predictions, confidence, ctx) -> tuple[str, list]:
 1. Tu ne dois JAMAIS inventer de probabilités. Utilise UNIQUEMENT celles fournies.
 2. Cite les probabilités exactes du JSON ML dans ton analyse.
 3. Couvre toutes les catégories disponibles : résultat (1X2), buts, tirs, corners, cartons, fautes, hors-jeu, possession.
-4. Si aucune probabilité ne dépasse 55 %, indique-le clairement sans inventer de picks.
-5. Réponds en français, de manière professionnelle.
-6. Fournis une analyse en 3-4 paragraphes structurés par thème et une liste de raisons.
-7. Si des cotes bookmaker sont fournies, compare-les aux probabilités ML sans les modifier."""
+4. Intègre l'historique individuel de chaque club (championnat, coupes, autres compétitions) ET les confrontations directes H2H.
+5. Ne te limite pas au seul H2H : la forme récente toutes compétitions compte autant.
+6. Si aucune probabilité ne dépasse 55 %, indique-le clairement sans inventer de picks.
+7. Réponds en français, de manière professionnelle.
+8. Fournis une analyse en 3-4 paragraphes structurés par thème et une liste de raisons.
+9. Si des cotes bookmaker sont fournies, compare-les aux probabilités ML sans les modifier."""
 
     user_prompt = f"""Match: {home} vs {away}
 
@@ -311,7 +364,7 @@ Probabilités ML (NE PAS MODIFIER):
 Confiance:
 {json.dumps(confidence, indent=2)}
 
-Contexte (moyennes récentes + H2H + cotes):
+Contexte (moyennes récentes + historique individuel toutes compétitions + H2H + cotes):
 {json.dumps(ctx, indent=2)}
 
 Produis:

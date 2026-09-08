@@ -156,17 +156,34 @@ type MatchQueryOpts struct {
 	MaxResults       int
 }
 
-func trackedExternalIDs() []int32 {
+func displayExternalIDs() []int32 {
 	cfg, err := leagues.Load()
 	if err != nil {
-		return []int32{39, 140, 135, 78, 61}
+		return []int32{2, 3, 848, 39, 140, 135, 78, 61, 40}
 	}
-	ids := cfg.TrackedExternalIDs()
+	ids := cfg.DisplayExternalIDs()
 	out := make([]int32, len(ids))
 	for i, id := range ids {
 		out[i] = int32(id)
 	}
 	return out
+}
+
+func predictableExternalIDs() []int32 {
+	cfg, err := leagues.Load()
+	if err != nil {
+		return []int32{2, 3, 848, 39, 140, 135, 78, 61}
+	}
+	ids := cfg.PredictableExternalIDs()
+	out := make([]int32, len(ids))
+	for i, id := range ids {
+		out[i] = int32(id)
+	}
+	return out
+}
+
+func trackedExternalIDs() []int32 {
+	return displayExternalIDs()
 }
 
 func leaguePrioritySQL() string {
@@ -186,16 +203,7 @@ func primaryLeaguePrioritySQL() string {
 }
 
 func couponExternalIDs() []int32 {
-	cfg, err := leagues.Load()
-	if err != nil {
-		return []int32{39, 140, 135, 78, 61, 3, 848, 40}
-	}
-	ids := cfg.CouponExternalIDs()
-	out := make([]int32, len(ids))
-	for i, id := range ids {
-		out[i] = int32(id)
-	}
-	return out
+	return displayExternalIDs()
 }
 
 func topMatchesMax() int {
@@ -219,8 +227,14 @@ func (s *Store) GetMatchesByDate(ctx context.Context, date time.Time, opts Match
 		max = topMatchesMax()
 	}
 
-	leagueID := opts.LeagueID
-	leagueExternalID := opts.LeagueExternalID
+	leagueIDFilter := ""
+	if opts.LeagueID != nil {
+		leagueIDFilter = *opts.LeagueID
+	}
+	leagueExternalFilter := 0
+	if opts.LeagueExternalID != nil {
+		leagueExternalFilter = *opts.LeagueExternalID
+	}
 	statusClause := matchStatusWhere(opts.Status, date)
 	priority := leaguePrioritySQL()
 
@@ -233,8 +247,8 @@ func (s *Store) GetMatchesByDate(ctx context.Context, date time.Time, opts Match
 		WHERE l.external_id = ANY($1::int[])
 		  AND m.kickoff_at::date = $2::date
 		  AND %s
-		  AND ($3::uuid IS NULL OR m.league_id = $3)
-		  AND ($5::int IS NULL OR l.external_id = $5)
+		  AND (NULLIF($3, '') IS NULL OR m.league_id = NULLIF($3, '')::uuid)
+		  AND ($5 = 0 OR l.external_id = $5)
 		ORDER BY
 			CASE m.status WHEN 'live' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END,
 			%s,
@@ -242,7 +256,7 @@ func (s *Store) GetMatchesByDate(ctx context.Context, date time.Time, opts Match
 		LIMIT $4
 	`, matchSelectColumns, statusClause, priority)
 
-	rows, err := s.pool.Query(ctx, query, trackedExternalIDs(), date, leagueID, max, leagueExternalID)
+	rows, err := s.pool.Query(ctx, query, displayExternalIDs(), date, leagueIDFilter, max, leagueExternalFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -440,6 +454,133 @@ func (s *Store) GetTeamRecentStatsAverages(ctx context.Context, teamID string, b
 	}
 
 	return &avg, nil
+}
+
+// TeamMatchHistoryEntry résumé d'un match récent (toutes compétitions confondues).
+type TeamMatchHistoryEntry struct {
+	Date         string `json:"date"`
+	LeagueName   string `json:"league_name"`
+	Round        string `json:"round,omitempty"`
+	Opponent     string `json:"opponent"`
+	IsHome       bool   `json:"is_home"`
+	GoalsFor     int    `json:"goals_for"`
+	GoalsAgainst int    `json:"goals_against"`
+	Result       string `json:"result"`
+}
+
+// HeadToHeadEntry résumé d'une confrontation directe (toutes compétitions).
+type HeadToHeadEntry struct {
+	Date       string `json:"date"`
+	LeagueName string `json:"league_name"`
+	HomeTeam   string `json:"home_team"`
+	AwayTeam   string `json:"away_team"`
+	HomeScore  int    `json:"home_score"`
+	AwayScore  int    `json:"away_score"`
+}
+
+func matchResult(gf, ga int) string {
+	if gf > ga {
+		return "W"
+	}
+	if gf < ga {
+		return "L"
+	}
+	return "D"
+}
+
+func (s *Store) GetTeamRecentMatchHistory(ctx context.Context, teamID string, before time.Time, limit int) ([]TeamMatchHistoryEntry, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.kickoff_at, l.name, COALESCE(m.round, ''),
+			CASE WHEN m.home_team_id = $1 THEN ht.name ELSE at.name END,
+			m.home_team_id = $1,
+			CASE WHEN m.home_team_id = $1 THEN m.home_score ELSE m.away_score END,
+			CASE WHEN m.home_team_id = $1 THEN m.away_score ELSE m.home_score END
+		FROM matches m
+		JOIN leagues l ON l.id = m.league_id
+		JOIN teams ht ON ht.id = m.home_team_id
+		JOIN teams at ON at.id = m.away_team_id
+		WHERE m.status = 'finished'
+		  AND m.kickoff_at < $2
+		  AND (m.home_team_id = $1 OR m.away_team_id = $1)
+		ORDER BY m.kickoff_at DESC
+		LIMIT $3
+	`, teamID, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TeamMatchHistoryEntry
+	for rows.Next() {
+		var kickoff time.Time
+		var leagueName, round, opponent string
+		var isHome bool
+		var gf, ga int
+		if err := rows.Scan(&kickoff, &leagueName, &round, &opponent, &isHome, &gf, &ga); err != nil {
+			return nil, err
+		}
+		entry := TeamMatchHistoryEntry{
+			Date:         kickoff.Format("2006-01-02"),
+			LeagueName:   leagueName,
+			Opponent:     opponent,
+			IsHome:       isHome,
+			GoalsFor:     gf,
+			GoalsAgainst: ga,
+			Result:       matchResult(gf, ga),
+		}
+		if round != "" {
+			entry.Round = round
+		}
+		out = append(out, entry)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetHeadToHeadHistory(ctx context.Context, homeTeamID, awayTeamID string, before time.Time, limit int) ([]HeadToHeadEntry, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.kickoff_at, l.name, ht.name, at.name, m.home_score, m.away_score
+		FROM matches m
+		JOIN leagues l ON l.id = m.league_id
+		JOIN teams ht ON ht.id = m.home_team_id
+		JOIN teams at ON at.id = m.away_team_id
+		WHERE m.status = 'finished'
+		  AND m.kickoff_at < $3
+		  AND (
+		    (m.home_team_id = $1 AND m.away_team_id = $2)
+		    OR (m.home_team_id = $2 AND m.away_team_id = $1)
+		  )
+		ORDER BY m.kickoff_at DESC
+		LIMIT $4
+	`, homeTeamID, awayTeamID, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []HeadToHeadEntry
+	for rows.Next() {
+		var kickoff time.Time
+		var leagueName, homeTeam, awayTeam string
+		var homeScore, awayScore int
+		if err := rows.Scan(&kickoff, &leagueName, &homeTeam, &awayTeam, &homeScore, &awayScore); err != nil {
+			return nil, err
+		}
+		out = append(out, HeadToHeadEntry{
+			Date:       kickoff.Format("2006-01-02"),
+			LeagueName: leagueName,
+			HomeTeam:   homeTeam,
+			AwayTeam:   awayTeam,
+			HomeScore:  homeScore,
+			AwayScore:  awayScore,
+		})
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetTeamVenueForm(ctx context.Context, teamID string, venue string, before time.Time, limit int) (float64, error) {
@@ -663,7 +804,7 @@ func (s *Store) GetScheduledMatchesForCoupon(ctx context.Context, maxMatches int
 			CASE WHEN m.kickoff_at::date = CURRENT_DATE THEN 0 ELSE 1 END,
 			m.kickoff_at
 		LIMIT $2
-	`, matchSelectColumns, couponMatchWhere(), primaryLeaguePrioritySQL()), couponExternalIDs(), maxMatches)
+	`, matchSelectColumns, couponMatchWhere(), leaguePrioritySQL()), displayExternalIDs(), maxMatches)
 	if err != nil {
 		return nil, err
 	}
@@ -686,9 +827,11 @@ func (s *Store) getTop5UpcomingMatches(ctx context.Context, limit int, includeLi
 		WHERE l.external_id = ANY($1::int[])
 		  AND %s
 		  AND m.kickoff_at BETWEEN NOW() - INTERVAL '1 day' AND NOW() + INTERVAL '7 days'
-		ORDER BY m.kickoff_at
+		ORDER BY
+			%s,
+			m.kickoff_at
 		LIMIT $2
-	`, matchSelectColumns, statusFilter), trackedExternalIDs(), limit)
+	`, matchSelectColumns, statusFilter, leaguePrioritySQL()), predictableExternalIDs(), limit)
 	if err != nil {
 		return nil, err
 	}

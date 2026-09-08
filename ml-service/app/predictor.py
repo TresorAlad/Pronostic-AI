@@ -138,9 +138,19 @@ class ModelRegistry:
             "predictions": predictions,
             "confidence": confidence,
             "no_bet_recommended": no_bet,
-            "model_version": "-".join(self.versions.values()) if self.versions else "none",
+            "model_version": self._bundle_model_version(),
             "data_snapshot_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def _bundle_model_version(self) -> str:
+        """Compact version string for DB storage (predictions.model_version VARCHAR)."""
+        if not self.versions:
+            return "none"
+        unique = sorted(set(self.versions.values()))
+        if len(unique) == 1:
+            return unique[0]
+        models = "+".join(sorted(self.versions.keys()))
+        return f"multi:{models}"
 
     def status(self) -> dict:
         return {

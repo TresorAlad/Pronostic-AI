@@ -28,9 +28,12 @@ func TestLoadLeaguesConfig(t *testing.T) {
 	if cfg.TopMatchesMax() != 10 {
 		t.Fatalf("TopMatchesMax = %d", cfg.TopMatchesMax())
 	}
-	ids := cfg.TrackedExternalIDs()
-	if len(ids) != 5 {
-		t.Fatalf("expected 5 leagues, got %d", len(ids))
+	ids := cfg.DisplayExternalIDs()
+	if len(ids) != 9 {
+		t.Fatalf("expected 9 leagues, got %d", len(ids))
+	}
+	if ids[0] != 2 {
+		t.Fatalf("expected UCL first (id 2), got %d", ids[0])
 	}
 	if !cfg.IsTracked(39) || cfg.IsTracked(999) {
 		t.Fatal("IsTracked mismatch")
@@ -38,8 +41,12 @@ func TestLoadLeaguesConfig(t *testing.T) {
 	if cfg.PrioritySQL("l.external_id") == "" {
 		t.Fatal("expected priority SQL")
 	}
+	predictable := cfg.PredictableExternalIDs()
+	if len(predictable) != 8 {
+		t.Fatalf("expected 8 predictable leagues, got %d", len(predictable))
+	}
 	couponIDs := cfg.CouponExternalIDs()
-	if len(couponIDs) < 5 {
-		t.Fatalf("coupon ids too short: %v", couponIDs)
+	if len(couponIDs) != 9 {
+		t.Fatalf("coupon ids count: got %d", len(couponIDs))
 	}
 }

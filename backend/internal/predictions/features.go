@@ -7,23 +7,21 @@ import (
 	"github.com/prono/backend/internal/db"
 )
 
-const minHistoryMatches = 3
-
 func (h *Handler) buildFeatures(ctx context.Context, match *db.Match) (map[string]interface{}, error) {
-	homeAvg, err := h.store.GetTeamRecentStatsAverages(ctx, match.HomeTeam.ID, match.KickoffAt, 5)
+	enricher := h.historyEnricher
+
+	dbHomeAvg, err := h.store.GetTeamRecentStatsAverages(ctx, match.HomeTeam.ID, match.KickoffAt, 5)
 	if err != nil {
 		return nil, fmt.Errorf("historique domicile: %w", err)
 	}
-	awayAvg, err := h.store.GetTeamRecentStatsAverages(ctx, match.AwayTeam.ID, match.KickoffAt, 5)
+	dbAwayAvg, err := h.store.GetTeamRecentStatsAverages(ctx, match.AwayTeam.ID, match.KickoffAt, 5)
 	if err != nil {
 		return nil, fmt.Errorf("historique extérieur: %w", err)
 	}
-	if homeAvg == nil || homeAvg.MatchCount < minHistoryMatches {
-		return nil, fmt.Errorf("historique insuffisant pour %s (minimum %d matchs terminés)", match.HomeTeam.Name, minHistoryMatches)
-	}
-	if awayAvg == nil || awayAvg.MatchCount < minHistoryMatches {
-		return nil, fmt.Errorf("historique insuffisant pour %s (minimum %d matchs terminés)", match.AwayTeam.Name, minHistoryMatches)
-	}
+
+	homeAvg, homeHistory, homeSource := enricher.resolveTeamStats(ctx, match.HomeTeam, match.KickoffAt, dbHomeAvg)
+	awayAvg, awayHistory, awaySource := enricher.resolveTeamStats(ctx, match.AwayTeam, match.KickoffAt, dbAwayAvg)
+	h2hHistory, h2hSource := enricher.resolveH2H(ctx, match, match.KickoffAt)
 
 	leagueAvgGoals, err := h.store.GetLeagueAverageGoals(ctx, match.LeagueID, match.KickoffAt, 200)
 	if err != nil {
@@ -33,11 +31,17 @@ func (h *Handler) buildFeatures(ctx context.Context, match *db.Match) (map[strin
 		leagueAvgGoals = (homeAvg.GoalsAvg + awayAvg.GoalsAvg) / 2
 	}
 	if leagueAvgGoals <= 0 {
-		return nil, fmt.Errorf("impossible de calculer la moyenne de buts pour la ligue")
+		leagueAvgGoals = 2.6
 	}
 
 	homeHomeForm, _ := h.store.GetTeamVenueForm(ctx, match.HomeTeam.ID, "home", match.KickoffAt, 5)
 	awayAwayForm, _ := h.store.GetTeamVenueForm(ctx, match.AwayTeam.ID, "away", match.KickoffAt, 5)
+	if homeHomeForm <= 0 && len(homeHistory) > 0 {
+		homeHomeForm = venueFormFromHistory(homeHistory, true)
+	}
+	if awayAwayForm <= 0 && len(awayHistory) > 0 {
+		awayAwayForm = venueFormFromHistory(awayHistory, false)
+	}
 
 	homeAvailability, err := h.store.GetTeamAvailability(ctx, match.HomeTeam.ID)
 	if err != nil {
@@ -48,30 +52,46 @@ func (h *Handler) buildFeatures(ctx context.Context, match *db.Match) (map[strin
 		return nil, fmt.Errorf("disponibilité extérieur: %w", err)
 	}
 
+	dataQuality := dataQualityLabel(homeAvg.MatchCount, awayAvg.MatchCount, homeSource+"+"+awaySource)
+
 	features := map[string]interface{}{
-		"home_goals_avg_5":            homeAvg.GoalsAvg,
-		"away_goals_avg_5":            awayAvg.GoalsAvg,
-		"home_goals_conceded_avg_5":   homeAvg.GoalsConcededAvg,
-		"away_goals_conceded_avg_5":   awayAvg.GoalsConcededAvg,
-		"home_form":                   homeAvg.Form,
-		"away_form":                   awayAvg.Form,
-		"home_home_form":              homeHomeForm,
-		"away_away_form":              awayAwayForm,
-		"home_attack_strength":        homeAvg.GoalsAvg / leagueAvgGoals,
-		"away_attack_strength":        awayAvg.GoalsAvg / leagueAvgGoals,
-		"home_defense_strength":       homeAvg.GoalsConcededAvg / leagueAvgGoals,
-		"away_defense_strength":       awayAvg.GoalsConcededAvg / leagueAvgGoals,
-		"home_advantage":              0.15,
-		"home_availability":           homeAvailability,
-		"away_availability":           awayAvailability,
-		"home_team_id":                match.HomeTeam.ID,
-		"away_team_id":                match.AwayTeam.ID,
-		"data_source":                 "database",
-		"match_history_home":          homeAvg.MatchCount,
-		"match_history_away":          awayAvg.MatchCount,
-		"stats_history_home":          homeAvg.StatsMatchCount,
-		"stats_history_away":          awayAvg.StatsMatchCount,
-		"league_avg_goals":             leagueAvgGoals,
+		"home_goals_avg_5":          homeAvg.GoalsAvg,
+		"away_goals_avg_5":          awayAvg.GoalsAvg,
+		"home_goals_conceded_avg_5": homeAvg.GoalsConcededAvg,
+		"away_goals_conceded_avg_5": awayAvg.GoalsConcededAvg,
+		"home_form":                 homeAvg.Form,
+		"away_form":                 awayAvg.Form,
+		"home_home_form":            homeHomeForm,
+		"away_away_form":            awayAwayForm,
+		"home_attack_strength":      homeAvg.GoalsAvg / leagueAvgGoals,
+		"away_attack_strength":      awayAvg.GoalsAvg / leagueAvgGoals,
+		"home_defense_strength":     homeAvg.GoalsConcededAvg / leagueAvgGoals,
+		"away_defense_strength":     awayAvg.GoalsConcededAvg / leagueAvgGoals,
+		"home_advantage":            0.15,
+		"home_availability":         homeAvailability,
+		"away_availability":         awayAvailability,
+		"home_team_id":              match.HomeTeam.ID,
+		"away_team_id":              match.AwayTeam.ID,
+		"data_source":               "database",
+		"data_quality":              dataQuality,
+		"match_history_home":        homeAvg.MatchCount,
+		"match_history_away":        awayAvg.MatchCount,
+		"stats_history_home":        homeAvg.StatsMatchCount,
+		"stats_history_away":        awayAvg.StatsMatchCount,
+		"history_source_home":       homeSource,
+		"history_source_away":       awaySource,
+		"league_avg_goals":          leagueAvgGoals,
+	}
+
+	if len(homeHistory) > 0 {
+		features["home_recent_matches"] = homeHistory
+	}
+	if len(awayHistory) > 0 {
+		features["away_recent_matches"] = awayHistory
+	}
+	if len(h2hHistory) > 0 {
+		features["h2h_history"] = h2hHistory
+		features["h2h_source"] = h2hSource
 	}
 
 	setIfPositive := func(key string, value float64) {
@@ -143,4 +163,28 @@ func (h *Handler) buildFeatures(ctx context.Context, match *db.Match) (map[strin
 	}
 
 	return features, nil
+}
+
+func venueFormFromHistory(entries []db.TeamMatchHistoryEntry, homeOnly bool) float64 {
+	var pts float64
+	var n int
+	for _, e := range entries {
+		if homeOnly && !e.IsHome {
+			continue
+		}
+		if !homeOnly && e.IsHome {
+			continue
+		}
+		switch e.Result {
+		case "W":
+			pts += 3
+		case "D":
+			pts += 1
+		}
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+	return pts / (float64(n) * 3)
 }

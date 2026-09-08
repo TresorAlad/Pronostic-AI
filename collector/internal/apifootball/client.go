@@ -142,9 +142,13 @@ func (c *Client) GetFixturesByDate(ctx context.Context, date string) ([]FixtureR
 
 	var resp struct {
 		Response []FixtureResponse `json:"response"`
+		Errors   json.RawMessage   `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
+	}
+	if len(resp.Errors) > 0 && string(resp.Errors) != "[]" && string(resp.Errors) != "{}" && string(resp.Errors) != "null" {
+		return nil, fmt.Errorf("API-Football: %s", string(resp.Errors))
 	}
 	return resp.Response, nil
 }

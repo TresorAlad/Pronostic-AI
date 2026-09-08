@@ -218,29 +218,21 @@ export default function MatchDetail() {
         <p className="text-xs text-slate-500 mt-5">
           Estimations statistiques. Aucune garantie de gain.
         </p>
-      </div>
 
-      {prediction?.ai_analysis && (
-        <div className="card border-brand/20 bg-gradient-to-br from-white to-slate-50 dark:from-navy-850 dark:to-navy-900">
-          <h3 className="font-display text-lg font-semibold text-heading mb-3">Analyse IA</h3>
-          <p className="text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed">
-            {prediction.ai_analysis}
-          </p>
-          {prediction.ai_reasons && prediction.ai_reasons.length > 0 && (
-            <div className="mt-5 pt-5 border-t border-navy-600">
-              <h4 className="text-sm font-medium text-slate-400 mb-3">Facteurs clés</h4>
-              <ul className="space-y-2">
-                {(prediction.ai_reasons as string[]).map((reason, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
-                    <span className="text-brand mt-0.5 shrink-0">&#10003;</span>
-                    {reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+        {prediction?.ai_reasons && (prediction.ai_reasons as string[]).length > 0 && (
+          <div className="mt-5 pt-5 border-t border-slate-200 dark:border-navy-600">
+            <h4 className="text-sm font-semibold text-heading mb-3">Synthèse IA</h4>
+            <ul className="space-y-2">
+              {(prediction.ai_reasons as string[]).map((reason, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
+                  <span className="text-brand mt-0.5 shrink-0">&#10003;</span>
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

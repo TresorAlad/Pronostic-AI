@@ -409,6 +409,11 @@ func isTrackedLeague(id int) bool {
 func isCouponLeague(id int) bool {
 	cfg, err := leagues.Load()
 	if err != nil {
+		for _, fallback := range []int{2, 3, 848, 39, 140, 135, 78, 61, 40} {
+			if id == fallback {
+				return true
+			}
+		}
 		return false
 	}
 	return cfg.IsCouponLeague(id)
